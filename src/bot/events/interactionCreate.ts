@@ -197,7 +197,8 @@ async function handleConfigEditModal(interaction: ModalSubmitInteraction, config
   try {
     const [section, key] = configPath.split('.');
     const config = getConfig();
-    const oldValue = (config as Record<string, Record<string, unknown>>)[section]?.[key];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oldValue = (config as any)[section]?.[key];
 
     // Try to parse as JSON if it looks like it
     let parsedValue: unknown = newValue;

@@ -164,7 +164,8 @@ async function handleSet(interaction: ChatInputCommandInteraction): Promise<void
 
   const [section, settingKey] = key.split('.');
   const config = getConfig();
-  const oldValue = (config as Record<string, Record<string, unknown>>)[section]?.[settingKey];
+  const oldValue = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (config as any)[section]?.[settingKey];
 
   // Parse value based on type
   let parsedValue: unknown;
@@ -239,7 +240,8 @@ async function handleReset(interaction: ChatInputCommandInteraction): Promise<vo
 
   const [section, settingKey] = key.split('.');
   const config = getConfig();
-  const oldValue = (config as Record<string, Record<string, unknown>>)[section]?.[settingKey];
+  const oldValue = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (config as any)[section]?.[settingKey];
 
   updateConfig(section as keyof Config, settingKey as never, defaultValue as never);
   logConfigChange(key, oldValue, defaultValue, interaction.user.id);

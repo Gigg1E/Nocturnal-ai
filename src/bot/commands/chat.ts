@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuOptionBuilder,
+  ComponentType,
 } from 'discord.js';
 import { Command } from './index';
 import {
@@ -194,7 +195,7 @@ async function handleSwitch(interaction: ChatInputCommandInteraction): Promise<v
 
   await interaction.reply({
     content: 'Select a chat session to switch to:',
-    components: [row],
+    components: [row as any],
     ephemeral: true,
   });
 }
@@ -224,45 +225,40 @@ async function handleDelete(interaction: ChatInputCommandInteraction): Promise<v
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
-  // We need to handle the selection in the interaction handler
-  // For now, let's use a simpler approach with buttons for confirmation
   await interaction.reply({
     content: 'Select a chat session to delete:',
-    components: [row],
+    components: [row as any],
     ephemeral: true,
   });
 
-  // Wait for selection
+  // Wait for selection using the reply's collector
   try {
-    const filter = (i: any) =>
-      i.customId === 'chat_delete_select' && i.user.id === interaction.user.id;
-
-    const selectInteraction = await interaction.channel?.awaitMessageComponent({
-      filter,
+    const response = await interaction.fetchReply();
+    const selectInteraction = await response.awaitMessageComponent({
+      componentType: ComponentType.StringSelect,
+      filter: (i) => i.user.id === interaction.user.id,
       time: 60000,
     });
 
-    if (selectInteraction && selectInteraction.isStringSelectMenu()) {
-      const chatId = selectInteraction.values[0];
-      const chat = chats.find((c) => c.id === chatId);
+    const chatId = selectInteraction.values[0];
+    const chat = chats.find((c) => c.id === chatId);
 
-      // Show confirmation
-      const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`chat_delete_confirm:${chatId}`)
-          .setLabel('Delete')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('chat_delete_cancel')
-          .setLabel('Cancel')
-          .setStyle(ButtonStyle.Secondary)
-      );
+    // Show confirmation
+    const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`chat_delete_confirm:${chatId}`)
+        .setLabel('Delete')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId('chat_delete_cancel')
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Secondary)
+    );
 
-      await selectInteraction.update({
-        content: `Are you sure you want to delete **${chat?.name}**? This cannot be undone.`,
-        components: [confirmRow],
-      });
-    }
+    await selectInteraction.update({
+      content: `Are you sure you want to delete **${chat?.name}**? This cannot be undone.`,
+      components: [confirmRow as any],
+    });
   } catch (error) {
     // Timeout - do nothing, the message will stay with the select menu
   }
@@ -292,7 +288,7 @@ async function handleClear(interaction: ChatInputCommandInteraction): Promise<vo
 
   await interaction.reply({
     content: `Are you sure you want to clear the history of **${activeChat.name}**? This cannot be undone.`,
-    components: [row],
+    components: [row as any],
     ephemeral: true,
   });
 }

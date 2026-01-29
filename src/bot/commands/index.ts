@@ -1,5 +1,6 @@
 import {
   SlashCommandBuilder,
+  SlashCommandSubcommandsOnlyBuilder,
   ChatInputCommandInteraction,
   REST,
   Routes,
@@ -18,7 +19,7 @@ import { statsCommand } from './stats';
 import { helpCommand } from './help';
 
 export interface Command {
-  data: SlashCommandBuilder | Omit<SlashCommandBuilder, 'addSubcommand' | 'addSubcommandGroup'>;
+  data: SlashCommandBuilder | SlashCommandSubcommandsOnlyBuilder | Omit<SlashCommandBuilder, 'addSubcommand' | 'addSubcommandGroup'>;
   execute: (interaction: ChatInputCommandInteraction) => Promise<void>;
   adminOnly?: boolean;
 }

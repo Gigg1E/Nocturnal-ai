@@ -1,8 +1,14 @@
-import { Message, AttachmentBuilder } from 'discord.js';
+import { Message, AttachmentBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { logger, logRateLimit } from '../../utils/logger';
 import { getConfig, isUserBlacklisted, isChannelAllowed } from '../../config';
 import { processMessage, processReply } from '../../services/chat';
 import { getMessageByDiscordId } from '../../database/queries';
+
+type SendableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
+
+function isSendableChannel(channel: any): channel is SendableChannel {
+  return 'send' in channel && typeof channel.send === 'function';
+}
 
 export async function handleMessageCreate(message: Message): Promise<void> {
   // Ignore bot messages
@@ -29,6 +35,13 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     return;
   }
 
+  // Ensure we can send to this channel
+  if (!isSendableChannel(message.channel)) {
+    return;
+  }
+
+  const channel = message.channel;
+
   // Extract the actual message content (remove bot mention)
   const mentionPattern = new RegExp(`<@!?${botId}>`, 'g');
   const cleanContent = message.content.replace(mentionPattern, '').trim();
@@ -43,11 +56,11 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   }
 
   // Show typing indicator
-  await message.channel.sendTyping();
+  await channel.sendTyping();
 
   // Keep typing indicator active for long responses
   const typingInterval = setInterval(() => {
-    message.channel.sendTyping().catch(() => {});
+    channel.sendTyping().catch(() => {});
   }, 9000);
 
   try {
@@ -97,7 +110,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 
       // Send remaining messages as follow-ups
       for (let i = 1; i < response.messages.length; i++) {
-        await message.channel.send({
+        await channel.send({
           content: response.messages[i],
           allowedMentions: { users: [] },
         });

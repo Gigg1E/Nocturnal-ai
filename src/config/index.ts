@@ -115,7 +115,8 @@ export function updateConfig<K extends keyof Config>(
   value: Config[K][keyof Config[K]]
 ): void {
   const config = getConfig();
-  (config[section] as Record<string, unknown>)[key as string] = value;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (config[section] as any)[key as string] = value;
   saveConfig(config);
   logger.info(`Config updated: ${section}.${String(key)} = ${JSON.stringify(value)}`);
 }

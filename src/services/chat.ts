@@ -1,4 +1,4 @@
-import { Message as DiscordMessage, Attachment } from 'discord.js';
+import { Message as DiscordMessage } from 'discord.js';
 import { getConfig } from '../config';
 import { logger, logBotUsage } from '../utils/logger';
 import {
@@ -54,6 +54,9 @@ export async function processMessage(
   const userId = discordMessage.author.id;
   const username = discordMessage.author.username;
 
+  // Ensure user exists first (needed for rate limit foreign key)
+  const user = getOrCreateUser(userId, username);
+
   // Check rate limit
   const rateLimitCheck = checkRateLimit(userId);
   if (!rateLimitCheck.allowed) {
@@ -75,24 +78,24 @@ export async function processMessage(
   }
 
   try {
-    // Get or create user and their active chat
-    const user = getOrCreateUser(userId, username);
+    // Get active chat for user
     let activeChat = getActiveChat(userId);
 
     if (!activeChat) {
-      activeChat = createChat(userId, 'General');
-      if (!activeChat) {
+      const newChat = createChat(userId, 'General');
+      if (!newChat) {
         return {
           success: false,
           messages: ['Failed to create chat session. Please try again.'],
           error: 'chat_creation_failed',
         };
       }
+      activeChat = newChat;
     }
 
     // Check for images in the message
     const imageAttachments = discordMessage.attachments.filter(
-      (att) => att.contentType?.startsWith('image/')
+      (att) => att.contentType?.startsWith('image/') ?? false
     );
     const hasImage = imageAttachments.size > 0;
 
@@ -280,6 +283,9 @@ export async function processReply(
   const userId = discordMessage.author.id;
   const username = discordMessage.author.username;
 
+  // Ensure user exists first (needed for rate limit foreign key)
+  getOrCreateUser(userId, username);
+
   // Check rate limit
   const rateLimitCheck = checkRateLimit(userId);
   if (!rateLimitCheck.allowed) {
@@ -300,8 +306,6 @@ export async function processReply(
   }
 
   try {
-    // Get or create user
-    getOrCreateUser(userId, username);
 
     // Get context from the replied message
     const contextMessages = getMessageContext(replyToMessageId, 5);
@@ -324,7 +328,7 @@ export async function processReply(
 
     // Check for images
     const imageAttachments = discordMessage.attachments.filter(
-      (att) => att.contentType?.startsWith('image/')
+      (att) => att.contentType?.startsWith('image/') ?? false
     );
     const hasImage = imageAttachments.size > 0;
     const useVision = hasImage && shouldUseVisionModel(true, mentionContent);
@@ -382,7 +386,10 @@ export async function processReply(
     // Get user's active chat or create one for saving this message
     let activeChat = getActiveChat(userId);
     if (!activeChat) {
-      activeChat = createChat(userId, 'General');
+      const newChat = createChat(userId, 'General');
+      if (newChat) {
+        activeChat = newChat;
+      }
     }
 
     if (activeChat) {

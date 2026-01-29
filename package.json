@@ -19,9 +19,9 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.7.0",
-    "discord.js": "^14.16.3",
+    "discord.js": "14.16.3",
     "dotenv": "^16.4.7",
-    "mermaid": "^11.4.0",
+    "mermaid": "^10.9.5",
     "node-fetch": "^3.3.2",
     "playwright": "^1.49.1",
     "uuid": "^11.0.4",
