@@ -1,0 +1,37 @@
+{
+  "name": "net-ai-discord-bot",
+  "version": "1.0.0",
+  "description": "NET.ai - Ollama-powered Discord assistant with tools API integration",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc -w"
+  },
+  "keywords": [
+    "discord",
+    "ollama",
+    "ai",
+    "chatbot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "mermaid": "^11.4.0",
+    "node-fetch": "^3.3.2",
+    "playwright": "^1.49.1",
+    "uuid": "^11.0.4",
+    "winston": "^3.17.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.5",
+    "@types/uuid": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}

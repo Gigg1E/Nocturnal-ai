@@ -1,0 +1,73 @@
+{
+  "bot": {
+    "name": "NET.ai",
+    "systemPrompt": "You are NET.ai, a technical assistant for a networking-focused community. You provide clear, accurate, and helpful responses about technology, networking, programming, and general topics. Be professional yet approachable. When you lack information or are uncertain, indicate this clearly. You have access to external tools for web search, weather, time, and location data - use them when needed to provide accurate, up-to-date information. Keep responses concise and well-formatted for Discord.",
+    "responseFormat": "text",
+    "maxResponseLength": 1999,
+    "maxChatsPerUser": 5,
+    "cooldownSeconds": 5
+  },
+  "ollama": {
+    "chatModel": "qwen3:14b",
+    "visionModel": "qwen3-vl:8b",
+    "maxTokens": 4096,
+    "temperature": 0.7,
+    "topP": 0.9
+  },
+  "tools": {
+    "enabled": true,
+    "defaultWeight": 0.3,
+    "triggerThreshold": 0.6,
+    "weights": {
+      "search": {
+        "base": 0.3,
+        "keywordBoost": 0.4,
+        "uncertaintyBoost": 0.3
+      },
+      "weather": {
+        "base": 0.2,
+        "keywordBoost": 0.5,
+        "uncertaintyBoost": 0.2
+      },
+      "time": {
+        "base": 0.2,
+        "keywordBoost": 0.5,
+        "uncertaintyBoost": 0.1
+      },
+      "location": {
+        "base": 0.2,
+        "keywordBoost": 0.5,
+        "uncertaintyBoost": 0.2
+      },
+      "network": {
+        "base": 0.2,
+        "keywordBoost": 0.5,
+        "uncertaintyBoost": 0.2
+      }
+    },
+    "keywords": {
+      "search": ["search", "look up", "find", "google", "what is", "who is", "latest", "recent", "news", "current"],
+      "weather": ["weather", "temperature", "forecast", "rain", "sunny", "cloudy", "cold", "hot", "humid"],
+      "time": ["time", "timezone", "clock", "hour", "date", "day"],
+      "location": ["where", "location", "address", "coordinates", "latitude", "longitude", "geocode"],
+      "network": ["ping", "dns", "ip", "resolve", "lookup", "trace", "host"]
+    }
+  },
+  "rateLimit": {
+    "cooldownMs": 5000,
+    "maxRequestsPerMinute": 12,
+    "maxRequestsPerHour": 100
+  },
+  "channels": {
+    "allowed": [],
+    "blocked": []
+  },
+  "users": {
+    "blacklist": []
+  },
+  "logging": {
+    "level": "info",
+    "logToFile": true,
+    "logDirectory": "./logs"
+  }
+}
