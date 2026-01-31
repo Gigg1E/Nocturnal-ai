@@ -10,7 +10,6 @@ import {
 import { logger } from '../../utils/logger';
 
 // Import commands
-import { chatCommand } from './chat';
 import { modelCommand } from './model';
 import { configCommand } from './config';
 import { blacklistCommand } from './blacklist';
@@ -29,7 +28,6 @@ export const commands = new Collection<string, Command>();
 
 // Register all commands
 const commandList: Command[] = [
-  chatCommand,
   modelCommand,
   configCommand,
   blacklistCommand,

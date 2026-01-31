@@ -1,5 +1,6 @@
 import { getConfig } from '../config';
 import { logger, logToolCall } from '../utils/logger';
+import { extractEntities, ExtractedEntities } from './extractor';
 
 const TOOLS_API_HOST = process.env.TOOLS_API_HOST || 'http://localhost:3100';
 
@@ -271,11 +272,23 @@ export async function executeTools(context: ToolContext): Promise<Map<string, To
   const results = new Map<string, ToolResult>();
   const message = context.message.toLowerCase();
 
-  for (const tool of context.toolsToCall) {
+  // Use AI to extract entities from the message
+  let entities: ExtractedEntities = {};
+  try {
+    entities = await extractEntities(context.message);
+    logger.debug('AI extracted entities:', entities);
+  } catch (error) {
+    logger.warn('AI extraction failed, falling back to regex:', error);
+  }
+
+  // Filter out redundant tools
+  const toolsToRun = filterRedundantTools(context.toolsToCall);
+
+  for (const tool of toolsToRun) {
     switch (tool) {
       case 'search': {
-        // Extract search query from message
-        const searchQuery = extractSearchQuery(context.message);
+        // Use AI-extracted search query, fall back to regex
+        const searchQuery = entities.searchQuery || extractSearchQuery(context.message);
         if (searchQuery) {
           results.set('search', await searchWeb(searchQuery));
         }
@@ -283,7 +296,8 @@ export async function executeTools(context: ToolContext): Promise<Map<string, To
       }
 
       case 'weather': {
-        const location = extractLocation(context.message);
+        // Use AI-extracted location, fall back to regex
+        const location = entities.location || extractLocation(context.message);
         if (location) {
           results.set('weather', await getWeather(location));
         }
@@ -291,8 +305,8 @@ export async function executeTools(context: ToolContext): Promise<Map<string, To
       }
 
       case 'time': {
-        // Check if asking for specific timezone
-        const timezone = extractTimezone(context.message);
+        // Use AI-extracted timezone, fall back to regex
+        const timezone = entities.timezone || extractTimezone(context.message);
         if (timezone) {
           results.set('timezone', await getTimezone(timezone));
         } else {
@@ -302,11 +316,13 @@ export async function executeTools(context: ToolContext): Promise<Map<string, To
       }
 
       case 'location': {
+        // Check for coordinates first (regex is reliable for this)
         const coords = extractCoordinates(context.message);
         if (coords) {
           results.set('reverse-geocode', await reverseGeocode(coords.lat, coords.lon));
         } else {
-          const locationName = extractLocation(context.message);
+          // Use AI-extracted location, fall back to regex
+          const locationName = entities.location || extractLocation(context.message);
           if (locationName) {
             results.set('geocode', await geocode(locationName));
           }
@@ -316,17 +332,19 @@ export async function executeTools(context: ToolContext): Promise<Map<string, To
 
       case 'network': {
         if (message.includes('ping')) {
-          const host = extractHostname(context.message);
+          // Use AI-extracted hostname, fall back to regex
+          const host = entities.hostname || extractHostname(context.message);
           if (host) {
             results.set('ping', await pingHost(host));
           }
         } else if (message.includes('dns') || message.includes('resolve')) {
-          const hostname = extractHostname(context.message);
+          const hostname = entities.hostname || extractHostname(context.message);
           if (hostname) {
             results.set('dns', await dnsLookup(hostname));
           }
         } else if (message.includes('ip')) {
-          const ip = extractIpAddress(context.message);
+          // Use AI-extracted IP, fall back to regex
+          const ip = entities.ipAddress || extractIpAddress(context.message);
           results.set('ip', await getIpInfo(ip || undefined));
         }
         break;
@@ -335,6 +353,22 @@ export async function executeTools(context: ToolContext): Promise<Map<string, To
   }
 
   return results;
+}
+
+// Filter out redundant tool calls
+function filterRedundantTools(tools: ToolType[]): ToolType[] {
+  const filtered = [...tools];
+
+  // If weather is requested, skip location (weather already includes location data)
+  if (filtered.includes('weather') && filtered.includes('location')) {
+    const idx = filtered.indexOf('location');
+    if (idx !== -1) {
+      filtered.splice(idx, 1);
+      logger.debug('Skipping location tool (redundant with weather)');
+    }
+  }
+
+  return filtered;
 }
 
 // ==================== EXTRACTION HELPERS ====================

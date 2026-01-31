@@ -25,7 +25,7 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
     // Try to respond with error
     try {
       const errorResponse = {
-        content: 'Sorry, an error occurred while processing your request.',
+        content: 'Error.',
         ephemeral: true,
       };
 
@@ -53,61 +53,39 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
     return;
   }
 
-  logger.info(`Command executed: /${interaction.commandName} by ${interaction.user.tag}`);
+  logger.info(`Command: /${interaction.commandName} by ${interaction.user.tag}`);
 
   await command.execute(interaction);
 }
 
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
-  const [action, ...params] = interaction.customId.split(':');
+  const [action] = interaction.customId.split(':');
 
-  logger.info(`Button pressed: ${action} by ${interaction.user.tag}`);
+  logger.info(`Button: ${action} by ${interaction.user.tag}`);
 
-  switch (action) {
-    case 'chat_delete_confirm':
-      await handleChatDeleteConfirm(interaction, params[0]);
-      break;
-    case 'chat_delete_cancel':
-      await handleChatDeleteCancel(interaction);
-      break;
-    case 'chat_clear_confirm':
-      await handleChatClearConfirm(interaction, params[0]);
-      break;
-    case 'chat_clear_cancel':
-      await handleChatClearCancel(interaction);
-      break;
-    default:
-      await interaction.reply({
-        content: 'Unknown button action.',
-        ephemeral: true,
-      });
-  }
+  // No button handlers needed currently
+  await interaction.reply({
+    content: 'Action not available.',
+    ephemeral: true,
+  });
 }
 
 async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
-  const [action, ...params] = interaction.customId.split(':');
+  const [action] = interaction.customId.split(':');
 
-  logger.info(`Select menu: ${action} by ${interaction.user.tag}`);
+  logger.info(`Select: ${action} by ${interaction.user.tag}`);
 
-  switch (action) {
-    case 'chat_switch':
-      await handleChatSwitchSelect(interaction);
-      break;
-    case 'chat_delete_select':
-      await handleChatDeleteSelect(interaction);
-      break;
-    default:
-      await interaction.reply({
-        content: 'Unknown menu action.',
-        ephemeral: true,
-      });
-  }
+  // No select menu handlers needed currently
+  await interaction.reply({
+    content: 'Action not available.',
+    ephemeral: true,
+  });
 }
 
 async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
 
-  logger.info(`Modal submitted: ${action} by ${interaction.user.tag}`);
+  logger.info(`Modal: ${action} by ${interaction.user.tag}`);
 
   switch (action) {
     case 'config_edit':
@@ -115,76 +93,10 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
       break;
     default:
       await interaction.reply({
-        content: 'Unknown modal action.',
+        content: 'Unknown action.',
         ephemeral: true,
       });
   }
-}
-
-// Button handlers
-import { deleteChat, clearChat, setActiveChat } from '../../database/queries';
-import { logChat } from '../../utils/logger';
-
-async function handleChatDeleteConfirm(interaction: ButtonInteraction, chatId: string): Promise<void> {
-  const success = deleteChat(chatId, interaction.user.id);
-
-  if (success) {
-    await interaction.update({
-      content: 'Chat deleted successfully.',
-      components: [],
-    });
-  } else {
-    await interaction.update({
-      content: 'Failed to delete chat. It may have already been deleted.',
-      components: [],
-    });
-  }
-}
-
-async function handleChatDeleteCancel(interaction: ButtonInteraction): Promise<void> {
-  await interaction.update({
-    content: 'Chat deletion cancelled.',
-    components: [],
-  });
-}
-
-async function handleChatClearConfirm(interaction: ButtonInteraction, chatId: string): Promise<void> {
-  const success = clearChat(chatId, interaction.user.id);
-
-  if (success) {
-    await interaction.update({
-      content: 'Chat history cleared successfully.',
-      components: [],
-    });
-  } else {
-    await interaction.update({
-      content: 'Failed to clear chat history.',
-      components: [],
-    });
-  }
-}
-
-async function handleChatClearCancel(interaction: ButtonInteraction): Promise<void> {
-  await interaction.update({
-    content: 'Chat clear cancelled.',
-    components: [],
-  });
-}
-
-async function handleChatSwitchSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  const chatId = interaction.values[0];
-  setActiveChat(interaction.user.id, chatId);
-
-  await interaction.update({
-    content: `Switched to chat. Your messages will now continue this conversation.`,
-    components: [],
-  });
-}
-
-async function handleChatDeleteSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  // This is handled in the chat delete command flow
-  // The select menu selection triggers the confirmation dialog
-  await interaction.deferUpdate();
 }
 
 // Modal handlers
@@ -217,13 +129,13 @@ async function handleConfigEditModal(interaction: ModalSubmitInteraction, config
     logConfigChange(configPath, oldValue, parsedValue, interaction.user.id);
 
     await interaction.reply({
-      content: `Configuration updated: \`${configPath}\` = \`${JSON.stringify(parsedValue)}\``,
+      content: `Updated: \`${configPath}\` = \`${JSON.stringify(parsedValue)}\``,
       ephemeral: true,
     });
   } catch (error) {
     logger.error('Failed to update config:', error);
     await interaction.reply({
-      content: 'Failed to update configuration. Please check the value format.',
+      content: 'Failed to update.',
       ephemeral: true,
     });
   }

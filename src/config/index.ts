@@ -7,7 +7,7 @@ export interface BotConfig {
   systemPrompt: string;
   responseFormat: 'text' | 'embed';
   maxResponseLength: number;
-  maxChatsPerUser: number;
+  historySize: number;
   cooldownSeconds: number;
 }
 

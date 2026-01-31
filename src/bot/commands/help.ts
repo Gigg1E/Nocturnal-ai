@@ -15,59 +15,32 @@ export const helpCommand: Command = {
     const config = getConfig();
 
     const embed = new EmbedBuilder()
-      .setTitle('NET.ai Help')
-      .setDescription('Your technical assistant for the Network community.')
-      .setColor(0x5865F2)
+      .setTitle('NET.ai')
+      .setDescription('Technical assistant. Direct answers, no fluff.')
+      .setColor(0x2f3136)
       .addFields(
         {
-          name: '💬 How to Chat',
+          name: 'How to Use',
           value: [
-            '**Mention me** in any message to start a conversation:',
-            '`@NET.ai What is a subnet mask?`',
-            '',
-            '**Reply to my messages** to continue the conversation:',
-            'Just click reply on any of my messages.',
-            '',
-            '**Send images** with your message for analysis:',
-            '`@NET.ai What does this error mean?` + image',
+            '**Mention me:** `@NET.ai your question`',
+            '**Reply to me:** Continue the conversation',
+            '**Send images:** `@NET.ai` + attachment',
           ].join('\n'),
         },
         {
-          name: '📚 Chat Management',
+          name: 'What I Do',
           value: [
-            '`/chat list` - View your chat sessions',
-            '`/chat create <name>` - Create a new chat',
-            '`/chat switch` - Switch between chats',
-            '`/chat delete` - Delete a chat',
-            '`/chat clear` - Clear current chat history',
-            '`/chat rename <name>` - Rename current chat',
-            '',
-            `*You can have up to ${config.bot.maxChatsPerUser} chats.*`,
+            '• Tech questions & networking',
+            '• Programming help',
+            '• Image/screenshot analysis',
+            '• Web search, weather, DNS lookups',
           ].join('\n'),
         },
         {
-          name: '🔧 What I Can Do',
-          value: [
-            '• Answer technical questions',
-            '• Explain networking concepts',
-            '• Help with programming',
-            '• Analyze images and screenshots',
-            '• Search the web for current information',
-            '• Check weather and time zones',
-            '• Perform DNS lookups and ping tests',
-          ].join('\n'),
-        },
-        {
-          name: '⚡ Tips',
-          value: [
-            '• Be specific in your questions for better answers',
-            '• I remember our conversation within each chat session',
-            '• Switch chats to keep different topics organized',
-            '• I have a cooldown between messages to stay responsive',
-          ].join('\n'),
+          name: 'Context',
+          value: `I remember your last ${config.bot.historySize} exchanges. Reply to continue, or just mention me again.`,
         }
       )
-      .setFooter({ text: 'NET.ai - Network Assistant' })
       .setTimestamp();
 
     await interaction.reply({

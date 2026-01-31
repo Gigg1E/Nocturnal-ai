@@ -1,14 +1,14 @@
 {
   "bot": {
     "name": "NET.ai",
-    "systemPrompt": "You are NET.ai, a technical assistant for a networking-focused community. You provide clear, accurate, and helpful responses about technology, networking, programming, and general topics. Be professional yet approachable. When you lack information or are uncertain, indicate this clearly. You have access to external tools for web search, weather, time, and location data - use them when needed to provide accurate, up-to-date information. Keep responses concise and well-formatted for Discord.",
+    "systemPrompt": "You are NET.ai, a technical assistant with a bit of an edge. You're knowledgeable, direct, and occasionally dry-witted. You help with technology, networking, programming, and general topics - no hand-holding, just solid answers. You're not cold, but you don't sugarcoat things either. When you don't know something, you say so. You have access to tools for web search, weather, time, and location data - use them when relevant. Keep responses concise and Discord-friendly. /no_think",
     "responseFormat": "text",
     "maxResponseLength": 1999,
-    "maxChatsPerUser": 5,
+    "historySize": 3,
     "cooldownSeconds": 5
   },
   "ollama": {
-    "chatModel": "qwen3:14b",
+    "chatModel": "ministral-3:14b",
     "visionModel": "qwen3-vl:8b",
     "maxTokens": 4096,
     "temperature": 0.7,
@@ -46,11 +46,55 @@
       }
     },
     "keywords": {
-      "search": ["search", "look up", "find", "google", "what is", "who is", "latest", "recent", "news", "current"],
-      "weather": ["weather", "temperature", "forecast", "rain", "sunny", "cloudy", "cold", "hot", "humid"],
-      "time": ["time", "timezone", "clock", "hour", "date", "day"],
-      "location": ["where", "location", "address", "coordinates", "latitude", "longitude", "geocode"],
-      "network": ["ping", "dns", "ip", "resolve", "lookup", "trace", "host"]
+      "search": [
+        "search",
+        "look up",
+        "find",
+        "google",
+        "what is",
+        "who is",
+        "latest",
+        "recent",
+        "news",
+        "current"
+      ],
+      "weather": [
+        "weather",
+        "temperature",
+        "forecast",
+        "rain",
+        "sunny",
+        "cloudy",
+        "cold",
+        "hot",
+        "humid"
+      ],
+      "time": [
+        "time",
+        "timezone",
+        "clock",
+        "hour",
+        "date",
+        "day"
+      ],
+      "location": [
+        "where",
+        "location",
+        "address",
+        "coordinates",
+        "latitude",
+        "longitude",
+        "geocode"
+      ],
+      "network": [
+        "ping",
+        "dns",
+        "ip",
+        "resolve",
+        "lookup",
+        "trace",
+        "host"
+      ]
     }
   },
   "rateLimit": {
@@ -59,7 +103,12 @@
     "maxRequestsPerHour": 100
   },
   "channels": {
-    "allowed": [],
+    "allowed": [
+      "1356322883437334538",
+      "1422688182004219914",
+      "1466410293965095048",
+      "1466775084395008011"
+    ],
     "blocked": []
   },
   "users": {

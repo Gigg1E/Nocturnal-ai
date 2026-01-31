@@ -2,17 +2,10 @@ import { Message as DiscordMessage } from 'discord.js';
 import { getConfig } from '../config';
 import { logger, logBotUsage } from '../utils/logger';
 import {
-  getOrCreateUser,
-  getActiveChat,
-  createChat,
-  addMessage,
-  getRecentMessages,
-  getMessageByDiscordId,
-  getMessageContext,
   checkRateLimit,
   updateRateLimit,
+  trackUsage,
 } from '../database/queries';
-import { Message as DbMessage } from '../database/schema';
 import {
   generateChat,
   generateVision,
@@ -31,8 +24,46 @@ import {
   splitIntoMessages,
   detectLongFormRequest,
   getLongFormRejection,
-  FormattedResponse,
 } from '../ollama/formatter';
+
+// ==================== IN-MEMORY HISTORY ====================
+
+interface HistoryEntry {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+const userHistory = new Map<string, HistoryEntry[]>();
+
+function getHistory(userId: string): HistoryEntry[] {
+  return userHistory.get(userId) || [];
+}
+
+function addToHistory(userId: string, userMsg: string, assistantMsg: string): void {
+  const config = getConfig();
+  let history = userHistory.get(userId) || [];
+
+  // Add the new exchange
+  history.push({ role: 'user', content: userMsg });
+  history.push({ role: 'assistant', content: assistantMsg });
+
+  // Keep only last N exchanges (2 entries per exchange)
+  const maxEntries = (config.bot.historySize || 3) * 2;
+  if (history.length > maxEntries) {
+    history = history.slice(-maxEntries);
+  }
+
+  userHistory.set(userId, history);
+}
+
+function clearHistory(userId: string): void {
+  userHistory.delete(userId);
+}
+
+// Export for potential use elsewhere
+export { clearHistory };
+
+// ==================== RESPONSE TYPES ====================
 
 export interface ChatResponse {
   success: boolean;
@@ -43,6 +74,8 @@ export interface ChatResponse {
   cooldownRemaining?: number;
 }
 
+// ==================== MESSAGE PROCESSING ====================
+
 /**
  * Process a user message and generate a response
  */
@@ -52,10 +85,6 @@ export async function processMessage(
 ): Promise<ChatResponse> {
   const config = getConfig();
   const userId = discordMessage.author.id;
-  const username = discordMessage.author.username;
-
-  // Ensure user exists first (needed for rate limit foreign key)
-  const user = getOrCreateUser(userId, username);
 
   // Check rate limit
   const rateLimitCheck = checkRateLimit(userId);
@@ -78,37 +107,29 @@ export async function processMessage(
   }
 
   try {
-    // Get active chat for user
-    let activeChat = getActiveChat(userId);
-
-    if (!activeChat) {
-      const newChat = createChat(userId, 'General');
-      if (!newChat) {
-        return {
-          success: false,
-          messages: ['Failed to create chat session. Please try again.'],
-          error: 'chat_creation_failed',
-        };
-      }
-      activeChat = newChat;
-    }
-
     // Check for images in the message
     const imageAttachments = discordMessage.attachments.filter(
       (att) => att.contentType?.startsWith('image/') ?? false
     );
     const hasImage = imageAttachments.size > 0;
-
-    // Determine if we should use vision model
     const useVision = hasImage && shouldUseVisionModel(true, mentionContent);
 
-    // Build conversation context
-    const context = await buildContext(
-      activeChat.id,
-      discordMessage,
-      mentionContent,
-      useVision,
-    );
+    // Build context with system prompt
+    const context: OllamaMessage[] = [
+      {
+        role: 'system',
+        content: config.bot.systemPrompt,
+      },
+    ];
+
+    // Add user's recent history
+    const history = getHistory(userId);
+    for (const entry of history) {
+      context.push({
+        role: entry.role,
+        content: entry.content,
+      });
+    }
 
     // Calculate tool weights and determine which tools to call
     const toolWeights = calculateToolWeights(mentionContent);
@@ -127,7 +148,7 @@ export async function processMessage(
     if (toolResults) {
       context.push({
         role: 'system',
-        content: `External data retrieved:\n${toolResults}`,
+        content: `External data:\n${toolResults}`,
       });
     }
 
@@ -156,7 +177,7 @@ export async function processMessage(
       response = await generateVision(
         mentionContent || 'What do you see in this image?',
         imageBase64,
-        context.slice(0, -1), // Exclude the last message we just added
+        context.slice(0, -1),
       );
     } else {
       response = await generateChat({
@@ -195,28 +216,21 @@ export async function processMessage(
         const forcedToolResults = formatToolResultsForAI(forcedResults);
 
         if (forcedToolResults) {
-          // Regenerate with tool results
           context.splice(-1, 0, {
             role: 'system',
-            content: `External data retrieved:\n${forcedToolResults}`,
+            content: `External data:\n${forcedToolResults}`,
           });
 
           const retryResponse = await generateChat({ messages: context });
-          const formatted = await formatResponse(retryResponse.message.content);
+          const retryContent = retryResponse.message.content;
+          const formatted = await formatResponse(retryContent);
 
-          // Save messages to database
-          await saveMessages(
-            activeChat.id,
-            mentionContent,
-            retryResponse.message.content,
-            discordMessage.id,
-            hasImage,
-            hasImage ? imageAttachments.first()?.url : undefined,
-          );
+          // Add to history
+          addToHistory(userId, mentionContent, retryContent);
 
           updateRateLimit(userId);
+          trackUsage(userId, 'message_retry');
           logBotUsage(userId, 'message_with_retry_tools', {
-            chatId: activeChat.id,
             hasImage,
             toolsUsed: forcedTools,
           });
@@ -234,21 +248,14 @@ export async function processMessage(
     // Format the response
     const formatted = await formatResponse(aiContent);
 
-    // Save messages to database
-    await saveMessages(
-      activeChat.id,
-      mentionContent,
-      aiContent,
-      discordMessage.id,
-      hasImage,
-      hasImage ? imageAttachments.first()?.url : undefined,
-    );
+    // Add to history
+    addToHistory(userId, mentionContent, aiContent);
 
-    // Update rate limit
+    // Update rate limit and track usage
     updateRateLimit(userId);
+    trackUsage(userId, 'message');
 
     logBotUsage(userId, 'message', {
-      chatId: activeChat.id,
       hasImage,
       useVision,
       toolsUsed: toolsToCall,
@@ -265,26 +272,22 @@ export async function processMessage(
     logger.error('Error processing message:', error);
     return {
       success: false,
-      messages: ['Sorry, I encountered an error processing your request. Please try again.'],
+      messages: ['Something went wrong. Try again.'],
       error: (error as Error).message,
     };
   }
 }
 
 /**
- * Process a reply to a previous message
+ * Process a reply to a previous message (uses Discord context + history)
  */
 export async function processReply(
   discordMessage: DiscordMessage,
-  replyToMessageId: string,
+  repliedToMessage: DiscordMessage,
   mentionContent: string,
 ): Promise<ChatResponse> {
   const config = getConfig();
   const userId = discordMessage.author.id;
-  const username = discordMessage.author.username;
-
-  // Ensure user exists first (needed for rate limit foreign key)
-  getOrCreateUser(userId, username);
 
   // Check rate limit
   const rateLimitCheck = checkRateLimit(userId);
@@ -306,11 +309,7 @@ export async function processReply(
   }
 
   try {
-
-    // Get context from the replied message
-    const contextMessages = getMessageContext(replyToMessageId, 5);
-
-    // Build context from the reply chain
+    // Build context with system prompt
     const context: OllamaMessage[] = [
       {
         role: 'system',
@@ -318,11 +317,45 @@ export async function processReply(
       },
     ];
 
-    // Add messages from context
-    for (const msg of contextMessages) {
+    // Add user's recent history first
+    const history = getHistory(userId);
+    for (const entry of history) {
       context.push({
-        role: msg.role as 'user' | 'assistant' | 'system',
-        content: msg.content,
+        role: entry.role,
+        content: entry.content,
+      });
+    }
+
+    // Add the replied-to message as additional context
+    const repliedContent = repliedToMessage.content;
+    const isFromBot = repliedToMessage.author.bot;
+
+    if (isFromBot) {
+      // If replying to bot's message, try to find original user message
+      if (repliedToMessage.reference?.messageId) {
+        try {
+          const originalMessage = await discordMessage.channel.messages.fetch(
+            repliedToMessage.reference.messageId
+          );
+          if (originalMessage && !originalMessage.author.bot) {
+            context.push({
+              role: 'user',
+              content: originalMessage.content.replace(/<@!?\d+>/g, '').trim(),
+            });
+          }
+        } catch {
+          // Couldn't fetch original, that's ok
+        }
+      }
+      context.push({
+        role: 'assistant',
+        content: repliedContent,
+      });
+    } else {
+      // Replying to another user's message
+      context.push({
+        role: 'user',
+        content: `[${repliedToMessage.author.username}]: ${repliedContent}`,
       });
     }
 
@@ -346,7 +379,7 @@ export async function processReply(
       if (toolResults) {
         context.push({
           role: 'system',
-          content: `External data retrieved:\n${toolResults}`,
+          content: `External data:\n${toolResults}`,
         });
       }
     }
@@ -381,32 +414,16 @@ export async function processReply(
       response = await generateChat({ messages: context });
     }
 
-    const formatted = await formatResponse(response.message.content);
+    const aiContent = response.message.content;
+    const formatted = await formatResponse(aiContent);
 
-    // Get user's active chat or create one for saving this message
-    let activeChat = getActiveChat(userId);
-    if (!activeChat) {
-      const newChat = createChat(userId, 'General');
-      if (newChat) {
-        activeChat = newChat;
-      }
-    }
-
-    if (activeChat) {
-      await saveMessages(
-        activeChat.id,
-        mentionContent,
-        response.message.content,
-        discordMessage.id,
-        hasImage,
-        hasImage ? imageAttachments.first()?.url : undefined,
-      );
-    }
+    // Add to history
+    addToHistory(userId, mentionContent, aiContent);
 
     updateRateLimit(userId);
+    trackUsage(userId, 'reply');
 
     logBotUsage(userId, 'reply', {
-      replyTo: replyToMessageId,
       hasImage,
       useVision,
     });
@@ -422,61 +439,8 @@ export async function processReply(
     logger.error('Error processing reply:', error);
     return {
       success: false,
-      messages: ['Sorry, I encountered an error processing your reply. Please try again.'],
+      messages: ['Something went wrong. Try again.'],
       error: (error as Error).message,
     };
   }
-}
-
-/**
- * Build conversation context from chat history
- */
-async function buildContext(
-  chatId: string,
-  discordMessage: DiscordMessage,
-  currentMessage: string,
-  useVision: boolean,
-): Promise<OllamaMessage[]> {
-  const config = getConfig();
-  const context: OllamaMessage[] = [];
-
-  // Add system prompt
-  context.push({
-    role: 'system',
-    content: config.bot.systemPrompt,
-  });
-
-  // Get recent messages from the chat
-  const recentMessages = getRecentMessages(chatId, 10);
-
-  for (const msg of recentMessages) {
-    context.push({
-      role: msg.role as 'user' | 'assistant' | 'system',
-      content: msg.content,
-    });
-  }
-
-  return context;
-}
-
-/**
- * Save user and assistant messages to the database
- */
-async function saveMessages(
-  chatId: string,
-  userContent: string,
-  assistantContent: string,
-  discordMessageId: string,
-  hasImage: boolean = false,
-  imageUrl?: string,
-): Promise<void> {
-  // Save user message
-  addMessage(chatId, 'user', userContent, {
-    hasImage,
-    imageUrl,
-    discordMessageId,
-  });
-
-  // Save assistant response
-  addMessage(chatId, 'assistant', assistantContent);
 }

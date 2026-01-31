@@ -1,8 +1,7 @@
 import { Message, AttachmentBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { logger, logRateLimit } from '../../utils/logger';
-import { getConfig, isUserBlacklisted, isChannelAllowed } from '../../config';
+import { isUserBlacklisted, isChannelAllowed } from '../../config';
 import { processMessage, processReply } from '../../services/chat';
-import { getMessageByDiscordId } from '../../database/queries';
 
 type SendableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
@@ -19,7 +18,8 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   if (!botId) return;
 
   const isMentioned = message.mentions.has(botId);
-  const isReplyToBot = await checkIfReplyToBot(message, botId);
+  const repliedToMessage = await getRepliedToMessage(message);
+  const isReplyToBot = repliedToMessage?.author.id === botId;
 
   // If neither mentioned nor replying to bot, ignore
   if (!isMentioned && !isReplyToBot) return;
@@ -49,7 +49,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   // Don't respond to empty messages (just a mention)
   if (!cleanContent && message.attachments.size === 0) {
     await message.reply({
-      content: "Hello! How can I help you? Just mention me with your question or send an image for me to analyze.",
+      content: "What?",
       allowedMentions: { repliedUser: false },
     });
     return;
@@ -66,9 +66,9 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   try {
     let response;
 
-    // Check if this is a reply to a previous bot message
-    if (isReplyToBot && message.reference?.messageId) {
-      response = await processReply(message, message.reference.messageId, cleanContent);
+    // Check if this is a reply to a previous message (bot or user)
+    if (repliedToMessage) {
+      response = await processReply(message, repliedToMessage, cleanContent);
     } else {
       response = await processMessage(message, cleanContent);
     }
@@ -76,8 +76,8 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     // Handle rate limiting
     if (response.rateLimited) {
       const cooldownMsg = response.cooldownRemaining
-        ? `Please wait ${response.cooldownRemaining} seconds before sending another message.`
-        : 'You\'re sending messages too quickly. Please slow down.';
+        ? `Wait ${response.cooldownRemaining}s.`
+        : 'Slow down.';
 
       await message.reply({
         content: cooldownMsg,
@@ -117,7 +117,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
       }
     } else if (!response.success) {
       await message.reply({
-        content: response.messages[0] || 'Sorry, something went wrong. Please try again.',
+        content: response.messages[0] || 'Something went wrong.',
         allowedMentions: { repliedUser: false },
       });
     }
@@ -125,7 +125,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     logger.error('Error in messageCreate handler:', error);
     try {
       await message.reply({
-        content: 'Sorry, I encountered an unexpected error. Please try again later.',
+        content: 'Error. Try again.',
         allowedMentions: { repliedUser: false },
       });
     } catch (replyError) {
@@ -137,18 +137,15 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 }
 
 /**
- * Check if the message is a reply to a bot message
+ * Get the message being replied to, if any
  */
-async function checkIfReplyToBot(message: Message, botId: string): Promise<boolean> {
-  if (!message.reference?.messageId) return false;
+async function getRepliedToMessage(message: Message): Promise<Message | null> {
+  if (!message.reference?.messageId) return null;
 
   try {
-    const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
-    return repliedMessage.author.id === botId;
+    return await message.channel.messages.fetch(message.reference.messageId);
   } catch {
     // Message might have been deleted or not accessible
-    // Check our database for the message
-    const dbMessage = getMessageByDiscordId(message.reference.messageId);
-    return dbMessage !== undefined;
+    return null;
   }
 }

@@ -5,6 +5,7 @@ import { getDatabase, closeDatabase } from './database/schema';
 import { startBot } from './bot/client';
 import { checkOllamaConnection } from './ollama/client';
 import { checkToolsApiConnection } from './ollama/tools';
+import { checkExtractorModel } from './ollama/extractor';
 import { closeBrowser } from './services/mermaid';
 
 async function main(): Promise<void> {
@@ -32,6 +33,14 @@ async function main(): Promise<void> {
   const ollamaConnected = await checkOllamaConnection();
   if (ollamaConnected) {
     logger.info('Ollama connection verified');
+
+    // Check if extractor model is available
+    const extractorAvailable = await checkExtractorModel();
+    if (extractorAvailable) {
+      logger.info('Entity extractor model (qwen2.5:1.5b) available');
+    } else {
+      logger.warn('Entity extractor model (qwen2.5:1.5b) not found. Run: ollama pull qwen2.5:1.5b');
+    }
   } else {
     logger.warn('Ollama is not accessible. AI features will fail until Ollama is running.');
   }

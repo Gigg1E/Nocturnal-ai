@@ -137,30 +137,18 @@ export async function formatResponse(content: string): Promise<FormattedResponse
     }
   }
 
+  // Extract all code blocks as file attachments
+  const extracted = extractCodeBlocksAsFiles(formatted, attachments);
+  formatted = extracted.content;
+
   // Clean up any remaining problematic formatting
   formatted = cleanupFormatting(formatted);
 
-  // Handle message length limit
-  const maxLength = config.bot.maxResponseLength;
-
-  if (formatted.length <= maxLength) {
-    return {
-      content: formatted,
-      attachments,
-      hasMore: false,
-    };
-  }
-
-  // Split at a sensible point (sentence, paragraph, or code block boundary)
-  const splitPoint = findSplitPoint(formatted, maxLength);
-  const firstPart = formatted.slice(0, splitPoint).trim();
-  const continuation = formatted.slice(splitPoint).trim();
-
+  // Return full formatted content - splitting is handled by splitIntoMessages
   return {
-    content: firstPart,
-    attachments,
-    hasMore: continuation.length > 0,
-    continuation,
+    content: formatted,
+    attachments: extracted.attachments,
+    hasMore: false,
   };
 }
 
@@ -168,7 +156,6 @@ export async function formatResponse(content: string): Promise<FormattedResponse
  * Remove Qwen3's <think>...</think> tags and their content
  */
 function removeThinkingTags(content: string): string {
-  // Remove <think>...</think> blocks (Qwen3 thinking)
   return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 }
 
@@ -253,7 +240,6 @@ function extractMermaidDiagrams(content: string): { text: string; diagrams: stri
   const diagrams: string[] = [];
   let text = content;
 
-  // Match ```mermaid ... ``` blocks
   const mermaidRegex = /```mermaid\n([\s\S]*?)```/g;
   let match;
   let index = 0;
@@ -265,6 +251,112 @@ function extractMermaidDiagrams(content: string): { text: string; diagrams: stri
   }
 
   return { text, diagrams };
+}
+
+// Language to file extension mapping
+const LANG_EXTENSIONS: Record<string, string> = {
+  javascript: 'js',
+  typescript: 'ts',
+  python: 'py',
+  ruby: 'rb',
+  rust: 'rs',
+  golang: 'go',
+  go: 'go',
+  java: 'java',
+  kotlin: 'kt',
+  swift: 'swift',
+  csharp: 'cs',
+  cs: 'cs',
+  cpp: 'cpp',
+  c: 'c',
+  php: 'php',
+  html: 'html',
+  css: 'css',
+  scss: 'scss',
+  sass: 'sass',
+  less: 'less',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yml',
+  xml: 'xml',
+  sql: 'sql',
+  bash: 'sh',
+  sh: 'sh',
+  shell: 'sh',
+  powershell: 'ps1',
+  ps1: 'ps1',
+  markdown: 'md',
+  md: 'md',
+  lua: 'lua',
+  perl: 'pl',
+  r: 'r',
+  scala: 'scala',
+  groovy: 'groovy',
+  dart: 'dart',
+  vue: 'vue',
+  svelte: 'svelte',
+  jsx: 'jsx',
+  tsx: 'tsx',
+};
+
+interface ExtractedCodeBlocks {
+  content: string;
+  attachments: Array<{ name: string; data: Buffer }>;
+}
+
+/**
+ * Extract all code blocks as file attachments
+ */
+function extractCodeBlocksAsFiles(
+  content: string,
+  existingAttachments: Array<{ name: string; data: Buffer }>
+): ExtractedCodeBlocks {
+  const attachments = [...existingAttachments];
+  let codeFileIndex = 1;
+
+  const newContent = content.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const trimmedCode = code.trim();
+    if (!trimmedCode) {
+      return ''; // Skip empty code blocks
+    }
+
+    // Extract as file attachment
+    const extension = LANG_EXTENSIONS[lang.toLowerCase()] || 'txt';
+    const fileName = `code_${codeFileIndex}.${extension}`;
+    codeFileIndex++;
+
+    attachments.push({
+      name: fileName,
+      data: Buffer.from(trimmedCode, 'utf-8'),
+    });
+
+    // Replace with reference to attachment
+    const langLabel = lang ? ` (${lang})` : '';
+    return `📎 *Code${langLabel}: ${fileName}*`;
+  });
+
+  return { content: newContent, attachments };
+}
+
+/**
+ * Truncate code blocks that are still too large after extraction attempt
+ * (fallback for splitIntoMessages which doesn't have attachment context)
+ */
+function truncateOversizedCodeBlocks(content: string, maxLength: number): string {
+  const maxCodeBlockSize = Math.floor(maxLength * 0.8);
+
+  return content.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    if (match.length <= maxCodeBlockSize) {
+      return match;
+    }
+
+    // Truncate the code, keeping first part
+    const truncatedCode = code.slice(0, maxCodeBlockSize - 50);
+    const lastNewline = truncatedCode.lastIndexOf('\n');
+    const cleanCut = lastNewline > 0 ? truncatedCode.slice(0, lastNewline) : truncatedCode;
+
+    return '```' + lang + '\n' + cleanCut + '\n// ... truncated\n```';
+  });
 }
 
 /**
@@ -288,44 +380,162 @@ function cleanupFormatting(content: string): string {
   return result;
 }
 
-/**
- * Find a sensible point to split long messages
- */
-function findSplitPoint(content: string, maxLength: number): number {
-  // Try to find a good split point before maxLength
+// ==================== SMART SPLITTING ====================
 
-  // First, try paragraph boundary
-  const paragraphEnd = content.lastIndexOf('\n\n', maxLength);
-  if (paragraphEnd > maxLength * 0.6) {
-    return paragraphEnd;
+interface ContentBlock {
+  type: 'text' | 'code' | 'list';
+  content: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * Parse content into blocks (code blocks, lists, text)
+ */
+function parseContentBlocks(content: string): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+  let pos = 0;
+
+  // Regex for code blocks
+  const codeBlockRegex = /```[\s\S]*?```/g;
+  let match;
+
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    // Add text before code block
+    if (match.index > pos) {
+      const textContent = content.slice(pos, match.index);
+      if (textContent.trim()) {
+        blocks.push({
+          type: 'text',
+          content: textContent,
+          start: pos,
+          end: match.index,
+        });
+      }
+    }
+
+    // Add code block
+    blocks.push({
+      type: 'code',
+      content: match[0],
+      start: match.index,
+      end: match.index + match[0].length,
+    });
+
+    pos = match.index + match[0].length;
   }
 
-  // Then try sentence boundary
+  // Add remaining text
+  if (pos < content.length) {
+    const textContent = content.slice(pos);
+    if (textContent.trim()) {
+      blocks.push({
+        type: 'text',
+        content: textContent,
+        start: pos,
+        end: content.length,
+      });
+    }
+  }
+
+  return blocks;
+}
+
+/**
+ * Find a smart split point that respects code blocks and formatting
+ */
+function findSmartSplitPoint(content: string, maxLength: number): number {
+  const blocks = parseContentBlocks(content);
+
+  // Find which block we're in at maxLength
+  let currentLength = 0;
+  let lastSafePoint = 0;
+
+  for (const block of blocks) {
+    const blockEnd = currentLength + block.content.length;
+
+    if (blockEnd <= maxLength) {
+      // Entire block fits
+      lastSafePoint = blockEnd;
+      currentLength = blockEnd;
+    } else if (currentLength >= maxLength) {
+      // Already past limit
+      break;
+    } else {
+      // Block crosses the limit
+      if (block.type === 'code') {
+        // Never split code blocks - use last safe point or start of this block
+        if (lastSafePoint > maxLength * 0.5) {
+          return block.start;
+        }
+        // Code block is too big and at start - this shouldn't happen after truncation
+        return maxLength;
+      } else {
+        // Text block - find good split within it
+        const remainingSpace = maxLength - currentLength;
+        const textSplitPoint = findTextSplitPoint(block.content, remainingSpace);
+        return currentLength + textSplitPoint;
+      }
+    }
+  }
+
+  return lastSafePoint > 0 ? lastSafePoint : maxLength;
+}
+
+/**
+ * Find split point within text (no code blocks)
+ */
+function findTextSplitPoint(text: string, maxLength: number): number {
+  if (text.length <= maxLength) {
+    return text.length;
+  }
+
+  // Priority order for split points
+  // 1. Paragraph boundary
+  const paragraphEnd = text.lastIndexOf('\n\n', maxLength);
+  if (paragraphEnd > maxLength * 0.5) {
+    return paragraphEnd + 2;
+  }
+
+  // 2. List item boundary (before a line starting with - or *)
+  const listPattern = /\n[-*•]\s/g;
+  let lastListBoundary = -1;
+  let listMatch;
+  while ((listMatch = listPattern.exec(text)) !== null) {
+    if (listMatch.index <= maxLength && listMatch.index > lastListBoundary) {
+      lastListBoundary = listMatch.index;
+    }
+  }
+  if (lastListBoundary > maxLength * 0.5) {
+    return lastListBoundary;
+  }
+
+  // 3. Sentence boundary
   const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
   let bestSentenceEnd = -1;
   for (const ender of sentenceEnders) {
-    const pos = content.lastIndexOf(ender, maxLength);
+    const pos = text.lastIndexOf(ender, maxLength);
     if (pos > bestSentenceEnd) {
-      bestSentenceEnd = pos + ender.length - 1;
+      bestSentenceEnd = pos + ender.length;
     }
   }
-  if (bestSentenceEnd > maxLength * 0.6) {
+  if (bestSentenceEnd > maxLength * 0.5) {
     return bestSentenceEnd;
   }
 
-  // Try line boundary
-  const lineEnd = content.lastIndexOf('\n', maxLength);
-  if (lineEnd > maxLength * 0.5) {
-    return lineEnd;
+  // 4. Line boundary
+  const lineEnd = text.lastIndexOf('\n', maxLength);
+  if (lineEnd > maxLength * 0.4) {
+    return lineEnd + 1;
   }
 
-  // Try word boundary
-  const wordEnd = content.lastIndexOf(' ', maxLength);
-  if (wordEnd > maxLength * 0.5) {
-    return wordEnd;
+  // 5. Word boundary
+  const wordEnd = text.lastIndexOf(' ', maxLength);
+  if (wordEnd > maxLength * 0.3) {
+    return wordEnd + 1;
   }
 
-  // Fallback to hard cut
+  // 6. Hard cut (shouldn't reach here normally)
   return maxLength;
 }
 
@@ -337,21 +547,44 @@ export async function splitIntoMessages(content: string): Promise<string[]> {
   const maxLength = config.bot.maxResponseLength;
   const messages: string[] = [];
 
-  let remaining = content;
+  // First, handle oversized code blocks
+  let processedContent = truncateOversizedCodeBlocks(content, maxLength);
 
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      messages.push(remaining);
+  while (processedContent.length > 0) {
+    if (processedContent.length <= maxLength) {
+      messages.push(processedContent);
       break;
     }
 
-    const splitPoint = findSplitPoint(remaining, maxLength);
-    messages.push(remaining.slice(0, splitPoint).trim());
-    remaining = remaining.slice(splitPoint).trim();
+    const splitPoint = findSmartSplitPoint(processedContent, maxLength);
+    let chunk = processedContent.slice(0, splitPoint).trim();
 
-    // Safety limit to prevent infinite loops
-    if (messages.length > 10) {
-      messages.push('*[Response truncated due to length]*');
+    // Ensure code blocks are closed in this chunk
+    const openBlocks = (chunk.match(/```/g) || []).length;
+    if (openBlocks % 2 !== 0) {
+      chunk += '\n```';
+    }
+
+    messages.push(chunk);
+    processedContent = processedContent.slice(splitPoint).trim();
+
+    // If next chunk starts mid-code-block, add opening
+    if (processedContent.length > 0) {
+      const remainingOpenBlocks = (processedContent.match(/```/g) || []).length;
+      if (remainingOpenBlocks % 2 !== 0) {
+        // Find the language from the unclosed block
+        const langMatch = processedContent.match(/^([^`\n]*)\n/);
+        if (langMatch && !langMatch[1].includes('```')) {
+          processedContent = '```\n' + processedContent;
+        }
+      }
+    }
+
+    // Safety limit - for a use-bot, 3 messages is plenty
+    if (messages.length >= 3) {
+      if (processedContent.length > 0) {
+        messages.push('*[Response truncated]*');
+      }
       break;
     }
   }
@@ -375,7 +608,6 @@ export function detectLongFormRequest(message: string): boolean {
     const match = message.match(pattern);
     if (match) {
       const count = parseInt(match[1], 10);
-      // Reject if asking for more than ~300 words or 3+ paragraphs
       if (count > 300 || (pattern.source.includes('paragraph') && count > 2)) {
         return true;
       }
@@ -389,10 +621,5 @@ export function detectLongFormRequest(message: string): boolean {
  * Generate rejection message for long-form requests
  */
 export function getLongFormRejection(): string {
-  return "I can't generate lengthy content like essays or long articles due to Discord's message limits. I'm happy to help with:\n" +
-    "• Answering questions\n" +
-    "• Explaining concepts briefly\n" +
-    "• Providing summaries\n" +
-    "• Writing short snippets or examples\n\n" +
-    "How can I help within these constraints?";
+  return "Can't do long-form content. Ask something specific instead.";
 }
