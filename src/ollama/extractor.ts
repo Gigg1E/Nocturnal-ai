@@ -10,6 +10,7 @@ export interface ExtractedEntities {
   hostname?: string;
   ipAddress?: string;
   coordinates?: { lat: number; lon: number };
+  phoneNumber?: string;
 }
 
 const EXTRACTION_PROMPT = `You are an entity extractor. Extract structured data from the user message.
@@ -20,10 +21,11 @@ Rules:
 - For search queries: extract the topic being searched
 - For hostnames: extract domain names or IP addresses
 - For timezones: extract timezone identifiers (e.g., "America/New_York")
+- For phone numbers: extract the raw number as-is, including country prefix if present (e.g., "+14155552671" or "415-555-2671")
 - If an entity is not present, omit it from the response
 
 Respond with ONLY valid JSON, no explanation:
-{"location": "city name", "searchQuery": "topic", "timezone": "Zone/City", "hostname": "domain.com", "ipAddress": "1.2.3.4"}`;
+{"location": "city name", "searchQuery": "topic", "timezone": "Zone/City", "hostname": "domain.com", "ipAddress": "1.2.3.4", "phoneNumber": "+14155552671"}`;
 
 export async function extractEntities(message: string): Promise<ExtractedEntities> {
   const startTime = Date.now();
@@ -95,6 +97,14 @@ export async function extractEntities(message: string): Promise<ExtractedEntitie
       const ipMatch = entities.ipAddress.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/);
       if (ipMatch) {
         cleaned.ipAddress = entities.ipAddress.trim();
+      }
+    }
+
+    if (entities.phoneNumber && typeof entities.phoneNumber === 'string') {
+      // Allow digits, spaces, dashes, parens, dots, and leading +
+      const phoneMatch = entities.phoneNumber.match(/^\+?[\d\s\-().]{7,}$/);
+      if (phoneMatch) {
+        cleaned.phoneNumber = entities.phoneNumber.trim();
       }
     }
 

@@ -10,9 +10,11 @@ export interface ToolResult {
   success: boolean;
   data?: unknown;
   error?: string;
+  endpointUp?: boolean;   // populated after auto-probe on failure
+  endpointError?: string; // probe error detail
 }
 
-export type ToolType = 'search' | 'weather' | 'time' | 'location' | 'network';
+export type ToolType = 'search' | 'weather' | 'time' | 'location' | 'network' | 'phone' | 'status' | 'compute' | 'crypto' | 'security';
 
 // ==================== WEIGHT CALCULATION ====================
 
@@ -22,6 +24,11 @@ export interface ToolWeights {
   time: number;
   location: number;
   network: number;
+  phone: number;
+  status: number;
+  compute: number;
+  crypto: number;
+  security: number;
 }
 
 export function calculateToolWeights(message: string, aiUncertainty: boolean = false): ToolWeights {
@@ -34,6 +41,11 @@ export function calculateToolWeights(message: string, aiUncertainty: boolean = f
     time: config.tools.weights.time.base,
     location: config.tools.weights.location.base,
     network: config.tools.weights.network.base,
+    phone: config.tools.weights.phone.base,
+    status: config.tools.weights.status.base,
+    compute: config.tools.weights.compute.base,
+    crypto: config.tools.weights.crypto.base,
+    security: config.tools.weights.security.base,
   };
 
   // Check for keyword matches and apply boosts
@@ -261,6 +273,164 @@ export async function pingHost(host: string): Promise<ToolResult> {
   }
 }
 
+export async function lookupPhone(number: string): Promise<ToolResult> {
+  const startTime = Date.now();
+
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/phone/${encodeURIComponent(number)}`);
+
+    if (!response.ok) {
+      throw new Error(`Phone API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    logToolCall('phone', { number }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('phone', { number }, false, Date.now() - startTime);
+    logger.error('Phone tool error:', error);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function hashText(text: string, algorithm = 'sha256'): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/hash`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, algorithm }),
+    });
+    if (!response.ok) throw new Error(`Hash API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('hash', { algorithm, length: text.length }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('hash', { algorithm }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function encodeBase64(text: string, mode = 'encode'): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/base64`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, mode }),
+    });
+    if (!response.ok) throw new Error(`Base64 API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('base64', { mode }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('base64', { mode }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function calcSubnet(cidr: string): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/subnet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cidr }),
+    });
+    if (!response.ok) throw new Error(`Subnet API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('subnet', { cidr }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('subnet', { cidr }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function whoisLookup(domain: string): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/whois/${encodeURIComponent(domain)}`);
+    if (!response.ok) throw new Error(`WHOIS API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('whois', { domain }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('whois', { domain }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function asnLookup(ip: string): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/asn/${encodeURIComponent(ip)}`);
+    if (!response.ok) throw new Error(`ASN API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('asn', { ip }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('asn', { ip }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function getCryptoPrice(symbol: string): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/crypto/${encodeURIComponent(symbol)}`);
+    if (!response.ok) throw new Error(`Crypto API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('crypto', { symbol }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('crypto', { symbol }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function lookupCVE(id: string): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/cve/${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error(`CVE API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('cve', { id }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('cve', { id }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function checkSSL(hostname: string): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/ssl/${encodeURIComponent(hostname)}`);
+    if (!response.ok) throw new Error(`SSL API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('ssl', { hostname }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('ssl', { hostname }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
+export async function checkHttpStatus(url: string): Promise<ToolResult> {
+  const startTime = Date.now();
+  try {
+    const response = await fetch(`${TOOLS_API_HOST}/api/http-status?url=${encodeURIComponent(url)}`);
+    if (!response.ok) throw new Error(`HTTP status API error: ${response.status}`);
+    const data = await response.json();
+    logToolCall('http-status', { url }, true, Date.now() - startTime);
+    return { success: true, data };
+  } catch (error) {
+    logToolCall('http-status', { url }, false, Date.now() - startTime);
+    return { success: false, error: (error as Error).message };
+  }
+}
+
 // ==================== TOOL EXECUTION ====================
 
 export interface ToolContext {
@@ -343,13 +513,111 @@ export async function executeTools(context: ToolContext): Promise<Map<string, To
             results.set('dns', await dnsLookup(hostname));
           }
         } else if (message.includes('ip')) {
-          // Use AI-extracted IP, fall back to regex
           const ip = entities.ipAddress || extractIpAddress(context.message);
-          results.set('ip', await getIpInfo(ip || undefined));
+          if (ip) {
+            results.set('ip', await getIpInfo(ip));
+          } else {
+            results.set('ip', {
+              success: false,
+              error: "No IP address found in message. Discord bots cannot determine a user's IP — ask the user to provide a specific IP address to look up.",
+            });
+          }
+        } else if (message.includes('whois')) {
+          const domain = entities.hostname || extractHostname(context.message);
+          if (domain) results.set('whois', await whoisLookup(domain));
+        } else if (message.includes('ssl') || message.includes('cert')) {
+          const host = entities.hostname || extractHostname(context.message);
+          if (host) results.set('ssl', await checkSSL(host));
+        } else if (message.includes('asn') || message.includes('autonomous system')) {
+          const ip = entities.ipAddress || extractIpAddress(context.message);
+          if (ip) results.set('asn', await asnLookup(ip));
+        } else if (
+          message.includes('http status') || message.includes('site status') ||
+          message.includes('is it up') || message.includes('is it down') ||
+          message.includes('is the site')
+        ) {
+          const url = extractUrl(context.message);
+          if (url) results.set('http-status', await checkHttpStatus(url));
         }
         break;
       }
+
+      case 'compute': {
+        if (message.includes('subnet') || message.includes('cidr')) {
+          const cidr = extractCIDR(context.message);
+          if (cidr) results.set('subnet', await calcSubnet(cidr));
+        } else if (message.includes('base64')) {
+          const mode = message.includes('decode') ? 'decode' : 'encode';
+          const text = entities.searchQuery || extractComputeText(context.message);
+          if (text) results.set('base64', await encodeBase64(text, mode));
+        } else {
+          const algo = extractHashAlgorithm(context.message);
+          const text = entities.searchQuery || extractComputeText(context.message);
+          if (text) results.set('hash', await hashText(text, algo));
+        }
+        break;
+      }
+
+      case 'crypto': {
+        const symbol = extractCoinSymbol(context.message) || entities.searchQuery || '';
+        if (symbol) results.set('crypto', await getCryptoPrice(symbol));
+        break;
+      }
+
+      case 'security': {
+        const cveId = extractCVEId(context.message);
+        if (cveId) results.set('cve', await lookupCVE(cveId));
+        break;
+      }
+
+      case 'phone': {
+        const number = entities.phoneNumber || extractPhoneNumber(context.message);
+        if (number) {
+          results.set('phone', await lookupPhone(number));
+        }
+        break;
+      }
+
+      case 'status': {
+        results.set('status', await getToolStatus());
+        break;
+      }
     }
+  }
+
+  // Auto-probe any failed tool endpoints so the AI knows if it's a service outage
+  const failedEntries = [...results.entries()].filter(([, r]) => !r.success);
+  if (failedEntries.length > 0) {
+    const keyToTool: Record<string, ToolType> = {
+      search: 'search',
+      weather: 'weather',
+      time: 'time',
+      timezone: 'time',
+      geocode: 'location',
+      'reverse-geocode': 'location',
+      ip: 'network',
+      dns: 'network',
+      ping: 'network',
+      whois: 'network',
+      ssl: 'network',
+      asn: 'network',
+      'http-status': 'network',
+      phone: 'phone',
+      hash: 'compute',
+      base64: 'compute',
+      subnet: 'compute',
+      crypto: 'crypto',
+      cve: 'security',
+    };
+    await Promise.all(
+      failedEntries.map(async ([key, result]) => {
+        const tool = keyToTool[key];
+        if (!tool) return;
+        const health = await probeSpecificTool(tool);
+        result.endpointUp = health.ok;
+        result.endpointError = health.error;
+      })
+    );
   }
 
   return results;
@@ -458,6 +726,83 @@ function extractIpAddress(message: string): string | null {
   return match ? match[1] : null;
 }
 
+function extractPhoneNumber(message: string): string | null {
+  // E.164 format: +14155552671
+  const e164 = message.match(/(\+\d{1,3}[\d\s\-().]{6,})/);
+  if (e164) return e164[1].trim();
+
+  // Keyword-prefixed number: "phone 555-123-4567" or "number (555) 123-4567"
+  const keywordPrefixed = message.match(
+    /(?:phone|number|call|validate|lookup|verify)\s+(?:number\s+)?(\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4})/i
+  );
+  if (keywordPrefixed) return keywordPrefixed[1].trim();
+
+  // Bare US format: (555) 123-4567 or 555-123-4567 or 555.123.4567
+  const usFormat = message.match(/(\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4})/);
+  if (usFormat) return usFormat[1].trim();
+
+  return null;
+}
+
+function extractCIDR(message: string): string | null {
+  const match = message.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2})/);
+  return match ? match[1] : null;
+}
+
+function extractCVEId(message: string): string | null {
+  const match = message.match(/(CVE-\d{4}-\d{4,7})/i);
+  return match ? match[1].toUpperCase() : null;
+}
+
+const COIN_NAME_MAP: Record<string, string> = {
+  bitcoin: 'btc', ethereum: 'eth', litecoin: 'ltc', dogecoin: 'doge',
+  solana: 'sol', cardano: 'ada', ripple: 'xrp', binance: 'bnb',
+  polkadot: 'dot', chainlink: 'link', avalanche: 'avax', cosmos: 'atom',
+  shiba: 'shib',
+};
+
+function extractCoinSymbol(message: string): string | null {
+  // Direct ticker: "BTC", "ETH", etc.
+  const tickerMatch = message.match(/\b(btc|eth|ltc|doge|sol|ada|xrp|bnb|matic|dot|link|avax|atom|near|shib)\b/i);
+  if (tickerMatch) return tickerMatch[1].toLowerCase();
+  // Coin name: "bitcoin", "ethereum", etc.
+  for (const [name, ticker] of Object.entries(COIN_NAME_MAP)) {
+    if (message.toLowerCase().includes(name)) return ticker;
+  }
+  return null;
+}
+
+function extractUrl(message: string): string | null {
+  // Full URL with scheme
+  const fullUrl = message.match(/https?:\/\/[^\s]+/i);
+  if (fullUrl) return fullUrl[0];
+  // Bare domain — common TLDs
+  const bareDomain = message.match(/\b([a-zA-Z0-9][a-zA-Z0-9-]*\.(?:com|net|org|io|dev|gov|edu|co|uk|de|ca|au)(?:\/[^\s]*)?)\b/i);
+  if (bareDomain) return `https://${bareDomain[1]}`;
+  return null;
+}
+
+function extractComputeText(message: string): string | null {
+  // Quoted text
+  const quoted = message.match(/["']([^"']+)["']/);
+  if (quoted) return quoted[1];
+  // Text after a colon
+  const afterColon = message.match(/:\s*(.+)$/);
+  if (afterColon) return afterColon[1].trim();
+  // Text after "of " or "encode " / "hash "
+  const afterKeyword = message.match(/(?:hash|encode|decode)\s+(.+)$/i);
+  if (afterKeyword) return afterKeyword[1].trim();
+  return null;
+}
+
+function extractHashAlgorithm(message: string): string {
+  if (message.includes('sha512')) return 'sha512';
+  if (message.includes('sha256')) return 'sha256';
+  if (message.includes('sha1')) return 'sha1';
+  if (message.includes('md5')) return 'md5';
+  return 'sha256';
+}
+
 // ==================== FORMAT TOOL RESULTS FOR AI ====================
 
 export function formatToolResultsForAI(results: Map<string, ToolResult>): string {
@@ -469,7 +814,34 @@ export function formatToolResultsForAI(results: Map<string, ToolResult>): string
     if (result.success) {
       parts.push(`\n${tool.toUpperCase()}:\n${JSON.stringify(result.data, null, 2)}`);
     } else {
-      parts.push(`\n${tool.toUpperCase()}: Error - ${result.error}`);
+      const fallbackMessages: Record<string, string> = {
+        weather:  'Weather data temporarily unavailable. Answer from your own knowledge and note that live conditions could not be fetched.',
+        search:   'Web search temporarily unavailable. Answer from your own knowledge and be transparent that you could not verify current information.',
+        time:     'Time/timezone lookup temporarily unavailable. Provide your best answer and note that live data could not be retrieved.',
+        location: 'Location/geocoding temporarily unavailable. Answer from your own knowledge if possible.',
+        network:  'The network lookup failed. Explicitly tell the user the request could not be completed, and ask them to provide the specific IP/hostname if they did not include one.',
+        phone:    'Phone number lookup temporarily unavailable. Let the user know the lookup failed.',
+        compute:  'Computation tool (hash/base64/subnet) temporarily unavailable. Explicitly tell the user the operation failed.',
+        crypto:   'Crypto price lookup temporarily unavailable. Let the user know the price could not be fetched.',
+        security: 'CVE/security lookup temporarily unavailable. Let the user know the lookup failed.',
+      };
+      // Sub-tool keys → group names for fallback lookup
+      const keyToGroup: Record<string, string> = {
+        ip: 'network', dns: 'network', ping: 'network',
+        whois: 'network', ssl: 'network', asn: 'network', 'http-status': 'network',
+        timezone: 'time', geocode: 'location', 'reverse-geocode': 'location',
+        hash: 'compute', base64: 'compute', subnet: 'compute',
+        crypto: 'crypto', cve: 'security',
+      };
+      const fallbackKey = keyToGroup[tool] ?? tool;
+      const fallback = fallbackMessages[fallbackKey] ?? 'Tool temporarily unavailable. Explicitly tell the user the lookup failed.';
+      let healthNote = '';
+      if (result.endpointUp === false) {
+        healthNote = ` The endpoint is currently unreachable (${result.endpointError ?? 'no response'}) — this is likely a service outage, not a data issue.`;
+      } else if (result.endpointUp === true) {
+        healthNote = ' The endpoint is reachable — this may be a transient data or query error.';
+      }
+      parts.push(`\n${tool.toUpperCase()}: [${fallback}${healthNote}]`);
     }
   }
 
@@ -484,5 +856,98 @@ export async function checkToolsApiConnection(): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+export interface ToolEndpointStatus {
+  ok: boolean;
+  error?: string;
+}
+
+async function probeEndpoint(
+  url: string,
+  options?: RequestInit,
+  timeoutMs = 5000
+): Promise<{ ok: boolean; error?: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: ctrl.signal as RequestInit['signal'] });
+    clearTimeout(timer);
+    return { ok: res.ok, error: res.ok ? undefined : `HTTP ${res.status}` };
+  } catch (err) {
+    clearTimeout(timer);
+    const msg = (err as Error).message;
+    return { ok: false, error: msg.includes('abort') ? 'timed out' : msg };
+  }
+}
+
+export async function checkIndividualTools(): Promise<Record<string, ToolEndpointStatus>> {
+  const entries = await Promise.all([
+    probeEndpoint(`${TOOLS_API_HOST}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', num_results: 1 }),
+    }).then(s => ['search', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/weather/London`).then(s => ['weather', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/time`).then(s => ['time', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/geocode/London`).then(s => ['location', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/ip/8.8.8.8`).then(s => ['network (ip)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/dns/google.com`).then(s => ['network (dns)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/phone/${encodeURIComponent('+12025551234')}`).then(s => ['phone', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/news/technology`).then(s => ['news', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/hash`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'probe', algorithm: 'sha256' }),
+    }).then(s => ['compute (hash)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/subnet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cidr: '192.168.1.0/24' }),
+    }).then(s => ['compute (subnet)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/whois/google.com`).then(s => ['network (whois)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/asn/8.8.8.8`).then(s => ['network (asn)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/crypto/btc`).then(s => ['crypto', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/cve/CVE-2021-44228`).then(s => ['security (cve)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/ssl/google.com`).then(s => ['network (ssl)', s] as const),
+    probeEndpoint(`${TOOLS_API_HOST}/api/http-status?url=${encodeURIComponent('https://google.com')}`).then(s => ['network (http-status)', s] as const),
+  ]);
+  return Object.fromEntries(entries);
+}
+
+// Per-tool endpoint probes (2s timeout — used for auto-health on failure)
+const TOOL_PROBES: Partial<Record<ToolType, () => Promise<ToolEndpointStatus>>> = {
+  search:   () => probeEndpoint(`${TOOLS_API_HOST}/api/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: 'test', num_results: 1 }),
+  }, 2000),
+  weather:  () => probeEndpoint(`${TOOLS_API_HOST}/api/weather/London`, undefined, 2000),
+  time:     () => probeEndpoint(`${TOOLS_API_HOST}/api/time`, undefined, 2000),
+  location: () => probeEndpoint(`${TOOLS_API_HOST}/api/geocode/London`, undefined, 2000),
+  network:  () => probeEndpoint(`${TOOLS_API_HOST}/api/ip/8.8.8.8`, undefined, 2000),
+  phone:    () => probeEndpoint(`${TOOLS_API_HOST}/api/phone/${encodeURIComponent('+12025551234')}`, undefined, 2000),
+  compute:  () => probeEndpoint(`${TOOLS_API_HOST}/api/hash`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: 'probe', algorithm: 'sha256' }),
+  }, 2000),
+  crypto:   () => probeEndpoint(`${TOOLS_API_HOST}/api/crypto/btc`, undefined, 2000),
+  security: () => probeEndpoint(`${TOOLS_API_HOST}/api/cve/CVE-2021-44228`, undefined, 2000),
+};
+
+async function probeSpecificTool(tool: ToolType): Promise<ToolEndpointStatus> {
+  const fn = TOOL_PROBES[tool];
+  if (!fn) return { ok: true };
+  return fn();
+}
+
+async function getToolStatus(): Promise<ToolResult> {
+  try {
+    const status = await checkIndividualTools();
+    return { success: true, data: status };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
   }
 }

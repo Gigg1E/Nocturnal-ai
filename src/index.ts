@@ -4,7 +4,7 @@ import { loadConfig } from './config';
 import { getDatabase, closeDatabase } from './database/schema';
 import { startBot } from './bot/client';
 import { checkOllamaConnection } from './ollama/client';
-import { checkToolsApiConnection } from './ollama/tools';
+import { checkToolsApiConnection, checkIndividualTools } from './ollama/tools';
 import { checkExtractorModel } from './ollama/extractor';
 import { closeBrowser } from './services/mermaid';
 
@@ -49,6 +49,14 @@ async function main(): Promise<void> {
   const toolsConnected = await checkToolsApiConnection();
   if (toolsConnected) {
     logger.info('Tools API connection verified');
+    const toolStatus = await checkIndividualTools();
+    for (const [name, { ok, error }] of Object.entries(toolStatus)) {
+      if (ok) {
+        logger.info(`  [OK]   ${name}`);
+      } else {
+        logger.warn(`  [FAIL] ${name}${error ? ': ' + error : ''}`);
+      }
+    }
   } else {
     logger.warn('Tools API is not accessible. External data features will be unavailable.');
   }

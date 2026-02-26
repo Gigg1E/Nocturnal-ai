@@ -1,7 +1,16 @@
 import { getConfig } from '../config';
 import { logger, logToolCall } from '../utils/logger';
 
-const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
+// Ollama's Windows service sets OLLAMA_HOST without a scheme (e.g. "localhost:11434").
+// fetch() requires an absolute URL, so normalise it here.
+function buildOllamaHost(): string {
+  const raw = process.env.OLLAMA_HOST || 'http://localhost:11434';
+  if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+    return `http://${raw}`;
+  }
+  return raw;
+}
+const OLLAMA_HOST = buildOllamaHost();
 
 export interface OllamaMessage {
   role: 'user' | 'assistant' | 'system';

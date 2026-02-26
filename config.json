@@ -1,14 +1,14 @@
 {
   "bot": {
     "name": "NET.ai",
-    "systemPrompt": "You are NET.ai, a technical assistant with a bit of an edge. You're knowledgeable, direct, and occasionally dry-witted. You help with technology, networking, programming, and general topics - no hand-holding, just solid answers. You're not cold, but you don't sugarcoat things either. When you don't know something, you say so. You have access to tools for web search, weather, time, and location data - use them when relevant. Keep responses concise and Discord-friendly. /no_think",
+    "systemPrompt": "You are NET.ai, a technical assistant with a bit of an edge. You're knowledgeable, direct, and occasionally dry-witted. You help with technology, networking, programming, and general topics - no hand-holding, just solid answers. You're not cold, but you don't sugarcoat things either. When you don't know something, you say so. You have access to tools for web search, weather, time, location, network (IP lookup, DNS, ping, WHOIS, SSL cert, ASN, HTTP status), phone number lookup, compute (hash/base64/subnet), crypto prices, and CVE security lookups - use them when relevant. Keep responses concise and Discord-friendly. /no_think",
     "responseFormat": "text",
     "maxResponseLength": 1999,
     "historySize": 3,
     "cooldownSeconds": 5
   },
   "ollama": {
-    "chatModel": "ministral-3:14b",
+    "chatModel": "qwen3:8b",
     "visionModel": "qwen3-vl:8b",
     "maxTokens": 4096,
     "temperature": 0.7,
@@ -43,6 +43,31 @@
         "base": 0.2,
         "keywordBoost": 0.5,
         "uncertaintyBoost": 0.2
+      },
+      "phone": {
+        "base": 0.1,
+        "keywordBoost": 0.6,
+        "uncertaintyBoost": 0.1
+      },
+      "status": {
+        "base": 0.05,
+        "keywordBoost": 0.7,
+        "uncertaintyBoost": 0.05
+      },
+      "compute": {
+        "base": 0.05,
+        "keywordBoost": 0.7,
+        "uncertaintyBoost": 0.05
+      },
+      "crypto": {
+        "base": 0.05,
+        "keywordBoost": 0.7,
+        "uncertaintyBoost": 0.05
+      },
+      "security": {
+        "base": 0.05,
+        "keywordBoost": 0.8,
+        "uncertaintyBoost": 0.05
       }
     },
     "keywords": {
@@ -93,7 +118,89 @@
         "resolve",
         "lookup",
         "trace",
-        "host"
+        "host",
+        "whois",
+        "registrar",
+        "ssl certificate",
+        "ssl cert",
+        "ssl",
+        "asn",
+        "autonomous system",
+        "http status",
+        "site status",
+        "is it up",
+        "is it down",
+        "is the site"
+      ],
+      "phone": [
+        "phone",
+        "phone number",
+        "call",
+        "area code",
+        "validate number",
+        "carrier",
+        "voip",
+        "mobile number",
+        "cell phone",
+        "telephone"
+      ],
+      "status": [
+        "status",
+        "check tools",
+        "tool status",
+        "what's working",
+        "what's broken",
+        "is it working",
+        "are you down",
+        "are you working",
+        "check status",
+        "check your tools",
+        "are your tools"
+      ],
+      "compute": [
+        "sha256",
+        "sha1",
+        "md5",
+        "sha512",
+        "base64",
+        "subnet",
+        "cidr",
+        "hash this",
+        "generate hash",
+        "encode this",
+        "decode this",
+        "network range",
+        "hash of",
+        "encode",
+        "decode"
+      ],
+      "crypto": [
+        "bitcoin",
+        "ethereum",
+        "btc",
+        "eth",
+        "dogecoin",
+        "doge",
+        "solana",
+        "sol",
+        "crypto price",
+        "coin price",
+        "bnb",
+        "ada",
+        "xrp",
+        "litecoin",
+        "cryptocurrency",
+        "crypto",
+        "altcoin"
+      ],
+      "security": [
+        "cve",
+        "cve-",
+        "vulnerability",
+        "nvd",
+        "security advisory",
+        "exploit cve",
+        "common vulnerabilities"
       ]
     }
   },
@@ -107,7 +214,9 @@
       "1356322883437334538",
       "1422688182004219914",
       "1466410293965095048",
-      "1466775084395008011"
+      "1466775084395008011",
+      "1473663967996936233",
+      "1473698246101827789"
     ],
     "blocked": []
   },

@@ -35,6 +35,11 @@ export interface ToolsConfig {
     time: ToolWeightConfig;
     location: ToolWeightConfig;
     network: ToolWeightConfig;
+    phone: ToolWeightConfig;
+    status: ToolWeightConfig;
+    compute: ToolWeightConfig;
+    crypto: ToolWeightConfig;
+    security: ToolWeightConfig;
   };
   keywords: {
     search: string[];
@@ -42,6 +47,11 @@ export interface ToolsConfig {
     time: string[];
     location: string[];
     network: string[];
+    phone: string[];
+    status: string[];
+    compute: string[];
+    crypto: string[];
+    security: string[];
   };
 }
 

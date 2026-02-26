@@ -16,6 +16,8 @@ import { blacklistCommand } from './blacklist';
 import { channelCommand } from './channel';
 import { statsCommand } from './stats';
 import { helpCommand } from './help';
+import { webhookCommand } from './webhook';
+import { statusCommand } from './status';
 
 export interface Command {
   data: SlashCommandBuilder | SlashCommandSubcommandsOnlyBuilder | Omit<SlashCommandBuilder, 'addSubcommand' | 'addSubcommandGroup'>;
@@ -34,6 +36,8 @@ const commandList: Command[] = [
   channelCommand,
   statsCommand,
   helpCommand,
+  webhookCommand,
+  statusCommand,
 ];
 
 for (const command of commandList) {
