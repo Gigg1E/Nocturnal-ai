@@ -31,7 +31,7 @@ NET.ai is a self-hosted Discord assistant powered by locally running [Ollama](ht
 ---
 
 ## Prerequisites
-
+_!IMPORTANT! You NEED the API to use online tools!_
 | Requirement | Notes |
 |---|---|
 | [Node.js](https://nodejs.org) v18+ | Runtime |
