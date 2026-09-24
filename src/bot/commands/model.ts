@@ -13,8 +13,14 @@ const OWNER_ID = process.env.OWNER_ID;
 export const modelCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('model')
-    .setDescription('Manage Ollama models (Admin only)')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDescription('Manage Ollama models (Owner only)')
+    // 0 = nobody by default, not even guild Administrators — this only
+    // affects Ollama model selection on the owner's own hardware (see
+    // OWNER_ID check below), so unlike /config etc. it shouldn't be
+    // guild-admin-visible at all. The owner has to grant themselves an
+    // exception per-guild in Discord's Integrations settings since bots
+    // can't set per-user command permission overrides via bot token alone.
+    .setDefaultMemberPermissions(0)
     .addSubcommand((subcommand) =>
       subcommand
         .setName('chat')
