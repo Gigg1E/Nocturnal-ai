@@ -5,8 +5,11 @@ import {
   EmbedBuilder,
 } from 'discord.js';
 import { Command } from './index';
+import { getConfig } from '../../config';
 import { checkOllamaConnection, listModels } from '../../ollama/client';
 import { checkToolsApiConnection, checkIndividualTools } from '../../ollama/tools';
+
+const EXTRACTOR_MODEL = 'qwen2.5:1.5b'; // must match src/ollama/extractor.ts
 
 const OK   = '🟢';
 const FAIL = '🔴';
@@ -29,7 +32,15 @@ export const statusCommand: Command = {
       checkToolsApiConnection(),
       listModels(),
     ]);
-    const chatModelOk = models.some((m) => m.startsWith('qwen3:4b'));
+    // Check against whatever's actually configured, not a hardcoded model
+    // name — the old version always checked for "qwen3:4b" regardless of
+    // what chatModel/visionModel were actually set to, so it could report a
+    // false failure (model changed, still shows red) or a false pass
+    // (qwen3:4b happens to still be installed but isn't what's in use).
+    const { chatModel, visionModel } = getConfig().ollama;
+    const chatModelOk = models.some((m) => m.startsWith(chatModel));
+    const visionModelOk = models.some((m) => m.startsWith(visionModel));
+    const extractorOk = models.some((m) => m.startsWith(EXTRACTOR_MODEL));
 
     let toolLines = '*(Tools API unreachable)*';
     if (toolsApiOk) {
@@ -48,9 +59,11 @@ export const statusCommand: Command = {
         {
           name: 'Core Services',
           value: [
-            `${ollamaOk    ? OK : FAIL} Ollama`,
-            `${chatModelOk ? OK : FAIL} qwen3:4b`,
-            `${toolsApiOk  ? OK : FAIL} Tools API`,
+            `${ollamaOk      ? OK : FAIL} Ollama`,
+            `${chatModelOk   ? OK : FAIL} Chat: ${chatModel}`,
+            `${visionModelOk ? OK : FAIL} Vision: ${visionModel}`,
+            `${extractorOk   ? OK : FAIL} Extractor: ${EXTRACTOR_MODEL}`,
+            `${toolsApiOk    ? OK : FAIL} Tools API`,
           ].join('\n'),
           inline: false,
         },
