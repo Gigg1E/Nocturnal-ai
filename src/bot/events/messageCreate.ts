@@ -1,6 +1,6 @@
 import { Message, AttachmentBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { logger, logRateLimit } from '../../utils/logger';
-import { isUserBlacklisted, isChannelAllowed } from '../../config';
+import { isUserBlacklisted, isChannelAllowed } from '../../config/guildConfig';
 import { processMessage, processReply } from '../../services/chat';
 import { formatToolArgs } from '../../ollama/tools';
 
@@ -23,12 +23,17 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 
   if (!isMentioned && !isReplyToBot) return;
 
-  if (isUserBlacklisted(message.author.id)) {
+  // A DM has no guild to scope against — falls back to a dedicated "dm"
+  // pseudo-guild config (empty blacklist/channel lists by default, same
+  // effective behavior as before this was guild-scoped).
+  const guildId = message.guildId ?? 'dm';
+
+  if (isUserBlacklisted(guildId, message.author.id)) {
     logger.info(`Blacklisted user ${message.author.id} tried to interact`);
     return;
   }
 
-  if (!isChannelAllowed(message.channel.id)) return;
+  if (!isChannelAllowed(guildId, message.channel.id)) return;
   if (!isSendableChannel(message.channel)) return;
 
   const channel = message.channel;

@@ -7,10 +7,9 @@ import {
 import { Command } from './index';
 import { getStats } from '../../database/queries';
 import { getConfig } from '../../config';
+import { loadGuildConfig } from '../../config/guildConfig';
 import { checkOllamaConnection } from '../../ollama/client';
 import { checkToolsApiConnection } from '../../ollama/tools';
-
-const OWNER_ID = process.env.OWNER_ID;
 
 export const statsCommand: Command = {
   data: new SlashCommandBuilder()
@@ -20,19 +19,14 @@ export const statsCommand: Command = {
   adminOnly: true,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    // Check if user is owner
-    if (interaction.user.id !== OWNER_ID) {
-      await interaction.reply({
-        content: 'Owner only.',
-        ephemeral: true,
-      });
-      return;
-    }
-
+    // Gated by setDefaultMemberPermissions(Administrator) — any admin of this
+    // guild can view stats for their own guild.
     await interaction.deferReply({ ephemeral: true });
 
-    const stats = getStats();
+    const guildId = interaction.guildId!;
+    const stats = getStats(guildId);
     const config = getConfig();
+    const guildConfig = loadGuildConfig(guildId);
 
     // Check service connections
     const [ollamaConnected, toolsConnected] = await Promise.all([
@@ -67,7 +61,7 @@ export const statsCommand: Command = {
           value: [
             `Model: ${config.ollama.chatModel}`,
             `Vision: ${config.ollama.visionModel}`,
-            `Tools: ${config.tools.enabled ? 'On' : 'Off'}`,
+            `Tools: ${guildConfig.tools.enabled ? 'On' : 'Off'}`,
           ].join('\n'),
           inline: true,
         },
@@ -91,9 +85,9 @@ export const statsCommand: Command = {
         {
           name: 'Rate Limits',
           value: [
-            `Cooldown: ${config.rateLimit.cooldownMs / 1000}s`,
-            `Per Min: ${config.rateLimit.maxRequestsPerMinute}`,
-            `Per Hour: ${config.rateLimit.maxRequestsPerHour}`,
+            `Cooldown: ${guildConfig.rateLimit.cooldownMs / 1000}s`,
+            `Per Min: ${guildConfig.rateLimit.maxRequestsPerMinute}`,
+            `Per Hour: ${guildConfig.rateLimit.maxRequestsPerHour}`,
           ].join('\n'),
           inline: true,
         }

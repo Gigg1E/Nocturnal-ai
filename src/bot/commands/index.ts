@@ -8,6 +8,7 @@ import {
   Collection,
 } from 'discord.js';
 import { logger } from '../../utils/logger';
+import { getAllowedGuilds } from '../../utils/guildAllowlist';
 
 // Import commands
 import { modelCommand } from './model';
@@ -46,28 +47,30 @@ for (const command of commandList) {
 
 export async function registerCommands(client: Client): Promise<void> {
   const token = process.env.DISCORD_TOKEN;
-  const serverId = process.env.DISCORD_SERVER_ID;
 
-  if (!token || !serverId) {
-    throw new Error('DISCORD_TOKEN or DISCORD_SERVER_ID not set');
+  if (!token) {
+    throw new Error('DISCORD_TOKEN not set');
+  }
+
+  const guilds = getAllowedGuilds();
+  if (guilds.length === 0) {
+    logger.warn('No guilds in data/guilds.json — no commands registered. Use scripts/manage-guilds.js add first.');
+    return;
   }
 
   const rest = new REST({ version: '10' }).setToken(token);
-
   const commandData = commandList.map((cmd) => cmd.data.toJSON());
 
-  try {
-    logger.info(`Registering ${commandData.length} slash commands...`);
-
-    // Register commands to the specific guild (faster updates during development)
-    await rest.put(
-      Routes.applicationGuildCommands(client.user!.id, serverId),
-      { body: commandData }
-    );
-
-    logger.info('Successfully registered slash commands');
-  } catch (error) {
-    logger.error('Failed to register commands:', error);
-    throw error;
+  for (const guild of guilds) {
+    try {
+      logger.info(`Registering ${commandData.length} slash commands to ${guild.name} (${guild.id})...`);
+      await rest.put(
+        Routes.applicationGuildCommands(client.user!.id, guild.id),
+        { body: commandData }
+      );
+      logger.info(`Successfully registered slash commands to ${guild.name}`);
+    } catch (error) {
+      logger.error(`Failed to register commands to ${guild.name} (${guild.id}):`, error);
+    }
   }
 }

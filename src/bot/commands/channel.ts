@@ -6,15 +6,14 @@ import {
 } from 'discord.js';
 import { Command } from './index';
 import {
-  getConfig,
+  loadGuildConfig,
   addAllowedChannel,
   removeAllowedChannel,
   addBlockedChannel,
   removeBlockedChannel,
-} from '../../config';
+  saveGuildConfig,
+} from '../../config/guildConfig';
 import { logger } from '../../utils/logger';
-
-const OWNER_ID = process.env.OWNER_ID;
 
 export const channelCommand: Command = {
   data: new SlashCommandBuilder()
@@ -82,15 +81,8 @@ export const channelCommand: Command = {
   adminOnly: true,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    // Check if user is owner
-    if (interaction.user.id !== OWNER_ID) {
-      await interaction.reply({
-        content: 'This command is restricted to the bot owner.',
-        ephemeral: true,
-      });
-      return;
-    }
-
+    // Gated by setDefaultMemberPermissions(Administrator) above — any admin
+    // of this specific guild can manage its own channel restrictions.
     const subcommand = interaction.options.getSubcommand();
 
     switch (subcommand) {
@@ -118,8 +110,9 @@ export const channelCommand: Command = {
 
 async function handleAllow(interaction: ChatInputCommandInteraction): Promise<void> {
   const channel = interaction.options.getChannel('channel', true);
+  const guildId = interaction.guildId!;
 
-  const config = getConfig();
+  const config = loadGuildConfig(guildId);
   if (config.channels.allowed.includes(channel.id)) {
     await interaction.reply({
       content: `<#${channel.id}> is already in the allowed list.`,
@@ -128,7 +121,7 @@ async function handleAllow(interaction: ChatInputCommandInteraction): Promise<vo
     return;
   }
 
-  addAllowedChannel(channel.id);
+  addAllowedChannel(guildId, channel.id);
 
   await interaction.reply({
     content: `<#${channel.id}> has been added to the allowed list.\n\n**Note:** When allowed channels are specified, the bot will ONLY respond in those channels.`,
@@ -140,8 +133,9 @@ async function handleAllow(interaction: ChatInputCommandInteraction): Promise<vo
 
 async function handleDisallow(interaction: ChatInputCommandInteraction): Promise<void> {
   const channel = interaction.options.getChannel('channel', true);
+  const guildId = interaction.guildId!;
 
-  const config = getConfig();
+  const config = loadGuildConfig(guildId);
   if (!config.channels.allowed.includes(channel.id)) {
     await interaction.reply({
       content: `<#${channel.id}> is not in the allowed list.`,
@@ -150,7 +144,7 @@ async function handleDisallow(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  removeAllowedChannel(channel.id);
+  removeAllowedChannel(guildId, channel.id);
 
   await interaction.reply({
     content: `<#${channel.id}> has been removed from the allowed list.`,
@@ -162,8 +156,9 @@ async function handleDisallow(interaction: ChatInputCommandInteraction): Promise
 
 async function handleBlock(interaction: ChatInputCommandInteraction): Promise<void> {
   const channel = interaction.options.getChannel('channel', true);
+  const guildId = interaction.guildId!;
 
-  const config = getConfig();
+  const config = loadGuildConfig(guildId);
   if (config.channels.blocked.includes(channel.id)) {
     await interaction.reply({
       content: `<#${channel.id}> is already blocked.`,
@@ -172,7 +167,7 @@ async function handleBlock(interaction: ChatInputCommandInteraction): Promise<vo
     return;
   }
 
-  addBlockedChannel(channel.id);
+  addBlockedChannel(guildId, channel.id);
 
   await interaction.reply({
     content: `<#${channel.id}> has been blocked. The bot will not respond in this channel.`,
@@ -184,8 +179,9 @@ async function handleBlock(interaction: ChatInputCommandInteraction): Promise<vo
 
 async function handleUnblock(interaction: ChatInputCommandInteraction): Promise<void> {
   const channel = interaction.options.getChannel('channel', true);
+  const guildId = interaction.guildId!;
 
-  const config = getConfig();
+  const config = loadGuildConfig(guildId);
   if (!config.channels.blocked.includes(channel.id)) {
     await interaction.reply({
       content: `<#${channel.id}> is not blocked.`,
@@ -194,7 +190,7 @@ async function handleUnblock(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  removeBlockedChannel(channel.id);
+  removeBlockedChannel(guildId, channel.id);
 
   await interaction.reply({
     content: `<#${channel.id}> has been unblocked.`,
@@ -205,7 +201,7 @@ async function handleUnblock(interaction: ChatInputCommandInteraction): Promise<
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const config = getConfig();
+  const config = loadGuildConfig(interaction.guildId!);
 
   let content = '**Channel Configuration**\n\n';
 
@@ -237,15 +233,14 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
 }
 
 async function handleReset(interaction: ChatInputCommandInteraction): Promise<void> {
-  const config = getConfig();
+  const guildId = interaction.guildId!;
+  const config = loadGuildConfig(guildId);
 
   // Clear both lists
   config.channels.allowed = [];
   config.channels.blocked = [];
 
-  // Save config
-  const { saveConfig } = await import('../../config');
-  saveConfig(config);
+  saveGuildConfig(guildId, config);
 
   await interaction.reply({
     content: 'Channel restrictions have been reset. The bot will now respond in all channels.',

@@ -139,73 +139,7 @@ export function getConfigValue<K extends keyof Config>(
   return config[section][key];
 }
 
-// Validation helpers
-export function isUserBlacklisted(userId: string): boolean {
-  return getConfig().users.blacklist.includes(userId);
-}
-
-export function isChannelAllowed(channelId: string): boolean {
-  const config = getConfig();
-  // If no allowed channels specified, all non-blocked channels are allowed
-  if (config.channels.allowed.length === 0) {
-    return !config.channels.blocked.includes(channelId);
-  }
-  return config.channels.allowed.includes(channelId) && !config.channels.blocked.includes(channelId);
-}
-
-export function addToBlacklist(userId: string): void {
-  const config = getConfig();
-  if (!config.users.blacklist.includes(userId)) {
-    config.users.blacklist.push(userId);
-    saveConfig(config);
-    logger.info(`User ${userId} added to blacklist`);
-  }
-}
-
-export function removeFromBlacklist(userId: string): void {
-  const config = getConfig();
-  const index = config.users.blacklist.indexOf(userId);
-  if (index > -1) {
-    config.users.blacklist.splice(index, 1);
-    saveConfig(config);
-    logger.info(`User ${userId} removed from blacklist`);
-  }
-}
-
-export function addAllowedChannel(channelId: string): void {
-  const config = getConfig();
-  if (!config.channels.allowed.includes(channelId)) {
-    config.channels.allowed.push(channelId);
-    saveConfig(config);
-    logger.info(`Channel ${channelId} added to allowed list`);
-  }
-}
-
-export function removeAllowedChannel(channelId: string): void {
-  const config = getConfig();
-  const index = config.channels.allowed.indexOf(channelId);
-  if (index > -1) {
-    config.channels.allowed.splice(index, 1);
-    saveConfig(config);
-    logger.info(`Channel ${channelId} removed from allowed list`);
-  }
-}
-
-export function addBlockedChannel(channelId: string): void {
-  const config = getConfig();
-  if (!config.channels.blocked.includes(channelId)) {
-    config.channels.blocked.push(channelId);
-    saveConfig(config);
-    logger.info(`Channel ${channelId} added to blocked list`);
-  }
-}
-
-export function removeBlockedChannel(channelId: string): void {
-  const config = getConfig();
-  const index = config.channels.blocked.indexOf(channelId);
-  if (index > -1) {
-    config.channels.blocked.splice(index, 1);
-    saveConfig(config);
-    logger.info(`Channel ${channelId} removed from blocked list`);
-  }
-}
+// Note: blacklist/channel-allowlist helpers (isUserBlacklisted, isChannelAllowed,
+// addToBlacklist, etc.) moved to ../config/guildConfig.ts — those are per-guild
+// now, this file only backs the settings that stay global (ollama/logging/tools
+// baseline data, plus whatever's still in OWNER_ONLY_CONFIGS in commands/config.ts).

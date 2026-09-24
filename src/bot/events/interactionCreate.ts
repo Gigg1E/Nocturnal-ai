@@ -4,6 +4,7 @@ import {
   ButtonInteraction,
   StringSelectMenuInteraction,
   ModalSubmitInteraction,
+  PermissionFlagsBits,
 } from 'discord.js';
 import { logger } from '../../utils/logger';
 import { commands } from '../commands';
@@ -54,6 +55,17 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
   }
 
   logger.info(`Command: /${interaction.commandName} by ${interaction.user.tag}`);
+
+  // Defense-in-depth on top of each command's setDefaultMemberPermissions —
+  // was declared per-command (adminOnly: true) but never actually enforced
+  // at the routing layer until now.
+  if (command.adminOnly && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({
+      content: 'This command requires Administrator permission in this server.',
+      ephemeral: true,
+    });
+    return;
+  }
 
   await command.execute(interaction);
 }

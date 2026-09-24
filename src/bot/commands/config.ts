@@ -9,26 +9,39 @@ import {
 } from 'discord.js';
 import { Command } from './index';
 import { getConfig, updateConfig, Config } from '../../config';
+import { loadGuildConfig, updateGuildConfig, GuildConfig, DEFAULT_GUILD_CONFIG } from '../../config/guildConfig';
 import { logger, logConfigChange } from '../../utils/logger';
 
 const OWNER_ID = process.env.OWNER_ID;
 
-// Allowed config paths for editing
-const EDITABLE_CONFIGS: Record<string, { description: string; type: string }> = {
+// Host-resource-affecting settings — deliberately stay owner-only and global,
+// not per-guild. This is running on the owner's own hardware; a guild admin
+// shouldn't be able to change which model loads or how much it generates.
+const OWNER_ONLY_CONFIGS: Record<string, { description: string; type: string }> = {
+  'ollama.maxTokens': { description: 'Max tokens for AI', type: 'number' },
+  'ollama.temperature': { description: 'AI temperature (0-1)', type: 'number' },
+  'ollama.topP': { description: 'AI top_p (0-1)', type: 'number' },
+  'logging.level': { description: 'Logging level', type: 'string' },
+};
+
+// Per-guild settings — any Administrator of the guild the command is run in
+// can edit these; they only affect that guild.
+const GUILD_CONFIGS: Record<string, { description: string; type: string }> = {
   'bot.systemPrompt': { description: 'System prompt for AI', type: 'string' },
   'bot.responseFormat': { description: 'Response format (text/embed)', type: 'string' },
   'bot.maxResponseLength': { description: 'Max response length', type: 'number' },
   'bot.maxChatsPerUser': { description: 'Max chats per user', type: 'number' },
   'bot.cooldownSeconds': { description: 'Cooldown between messages', type: 'number' },
-  'ollama.maxTokens': { description: 'Max tokens for AI', type: 'number' },
-  'ollama.temperature': { description: 'AI temperature (0-1)', type: 'number' },
-  'ollama.topP': { description: 'AI top_p (0-1)', type: 'number' },
   'tools.enabled': { description: 'Enable external tools', type: 'boolean' },
   'tools.triggerThreshold': { description: 'Tool trigger threshold', type: 'number' },
   'rateLimit.cooldownMs': { description: 'Cooldown in milliseconds', type: 'number' },
   'rateLimit.maxRequestsPerMinute': { description: 'Max requests per minute', type: 'number' },
   'rateLimit.maxRequestsPerHour': { description: 'Max requests per hour', type: 'number' },
-  'logging.level': { description: 'Logging level', type: 'string' },
+};
+
+const EDITABLE_CONFIGS: Record<string, { description: string; type: string }> = {
+  ...GUILD_CONFIGS,
+  ...OWNER_ONLY_CONFIGS,
 };
 
 export const configCommand: Command = {
@@ -99,15 +112,9 @@ export const configCommand: Command = {
   adminOnly: true,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    // Check if user is owner
-    if (interaction.user.id !== OWNER_ID) {
-      await interaction.reply({
-        content: 'This command is restricted to the bot owner.',
-        ephemeral: true,
-      });
-      return;
-    }
-
+    // Gated by setDefaultMemberPermissions(Administrator) above for the
+    // per-guild fields; handleSet/handleReset additionally require OWNER_ID
+    // for anything in OWNER_ONLY_CONFIGS.
     const subcommand = interaction.options.getSubcommand();
 
     switch (subcommand) {
@@ -124,12 +131,37 @@ export const configCommand: Command = {
   },
 };
 
+// bot/tools/rateLimit/channels/users are per-guild now; ollama/logging stay
+// global. "tools" is a merge — enabled/triggerThreshold are per-guild but
+// weights/keywords are still shared global baseline data.
+function getViewableSection(section: string, globalConfig: Config, guildConfig: GuildConfig): unknown {
+  switch (section) {
+    case 'bot':
+      return guildConfig.bot;
+    case 'rateLimit':
+      return guildConfig.rateLimit;
+    case 'channels':
+      return guildConfig.channels;
+    case 'users':
+      return guildConfig.users;
+    case 'tools':
+      return { enabled: guildConfig.tools.enabled, triggerThreshold: guildConfig.tools.triggerThreshold, weights: globalConfig.tools.weights, keywords: globalConfig.tools.keywords };
+    case 'ollama':
+      return globalConfig.ollama;
+    case 'logging':
+      return globalConfig.logging;
+    default:
+      return undefined;
+  }
+}
+
 async function handleView(interaction: ChatInputCommandInteraction): Promise<void> {
   const section = interaction.options.getString('section');
-  const config = getConfig();
+  const globalConfig = getConfig();
+  const guildConfig = loadGuildConfig(interaction.guildId!);
 
   if (section) {
-    const sectionConfig = config[section as keyof Config];
+    const sectionConfig = getViewableSection(section, globalConfig, guildConfig);
     const formatted = formatConfigSection(section, sectionConfig);
 
     await interaction.reply({
@@ -137,9 +169,14 @@ async function handleView(interaction: ChatInputCommandInteraction): Promise<voi
       ephemeral: true,
     });
   } else {
-    // Show overview
-    const overview = Object.keys(config)
-      .map((key) => `• **${key}**: ${Object.keys(config[key as keyof Config]).length} settings`)
+    // Show overview across both global and per-guild sections
+    const sections = ['bot', 'ollama', 'tools', 'rateLimit', 'channels', 'users', 'logging'];
+    const overview = sections
+      .map((key) => {
+        const sectionConfig = getViewableSection(key, globalConfig, guildConfig) as Record<string, unknown>;
+        const scope = key === 'ollama' || key === 'logging' ? 'global' : 'this server';
+        return `• **${key}** (${scope}): ${Object.keys(sectionConfig).length} settings`;
+      })
       .join('\n');
 
     await interaction.reply({
@@ -162,10 +199,22 @@ async function handleSet(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
+  const isOwnerOnly = key in OWNER_ONLY_CONFIGS;
+  if (isOwnerOnly && interaction.user.id !== OWNER_ID) {
+    await interaction.reply({
+      content: `\`${key}\` affects the AI model/host directly and is restricted to the bot owner.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
   const [section, settingKey] = key.split('.');
-  const config = getConfig();
-  const oldValue = // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (config as any)[section]?.[settingKey];
+  const guildId = interaction.guildId!;
+  const oldValue = isOwnerOnly
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? (getConfig() as any)[section]?.[settingKey]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    : (loadGuildConfig(guildId) as any)[section]?.[settingKey];
 
   // Parse value based on type
   let parsedValue: unknown;
@@ -192,11 +241,15 @@ async function handleSet(interaction: ChatInputCommandInteraction): Promise<void
   }
 
   try {
-    updateConfig(section as keyof Config, settingKey as never, parsedValue as never);
+    if (isOwnerOnly) {
+      updateConfig(section as keyof Config, settingKey as never, parsedValue as never);
+    } else {
+      updateGuildConfig(guildId, section as keyof GuildConfig, settingKey as never, parsedValue as never);
+    }
     logConfigChange(key, oldValue, parsedValue, interaction.user.id);
 
     await interaction.reply({
-      content: `Configuration updated:\n\`${key}\`: \`${JSON.stringify(oldValue)}\` → \`${JSON.stringify(parsedValue)}\``,
+      content: `Configuration updated${isOwnerOnly ? '' : ' for this server'}:\n\`${key}\`: \`${JSON.stringify(oldValue)}\` → \`${JSON.stringify(parsedValue)}\``,
       ephemeral: true,
     });
   } catch (error) {
@@ -211,25 +264,33 @@ async function handleSet(interaction: ChatInputCommandInteraction): Promise<void
 async function handleReset(interaction: ChatInputCommandInteraction): Promise<void> {
   const key = interaction.options.getString('key', true);
 
-  // Default values
-  const defaults: Record<string, unknown> = {
-    'bot.systemPrompt': "You are NET.ai, a technical assistant for a networking-focused community. You provide clear, accurate, and helpful responses about technology, networking, programming, and general topics. Be professional yet approachable. When you lack information or are uncertain, indicate this clearly. You have access to external tools for web search, weather, time, and location data - use them when needed to provide accurate, up-to-date information. Keep responses concise and well-formatted for Discord.",
-    'bot.responseFormat': 'text',
-    'bot.maxResponseLength': 1999,
-    'bot.maxChatsPerUser': 5,
-    'bot.cooldownSeconds': 5,
+  const isOwnerOnly = key in OWNER_ONLY_CONFIGS;
+  if (isOwnerOnly && interaction.user.id !== OWNER_ID) {
+    await interaction.reply({
+      content: `\`${key}\` affects the AI model/host directly and is restricted to the bot owner.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // Owner-only defaults (unchanged, global config). Per-guild defaults come
+  // straight from DEFAULT_GUILD_CONFIG so there's one source of truth.
+  const ownerDefaults: Record<string, unknown> = {
     'ollama.maxTokens': 4096,
     'ollama.temperature': 0.7,
     'ollama.topP': 0.9,
-    'tools.enabled': true,
-    'tools.triggerThreshold': 0.6,
-    'rateLimit.cooldownMs': 5000,
-    'rateLimit.maxRequestsPerMinute': 12,
-    'rateLimit.maxRequestsPerHour': 100,
     'logging.level': 'info',
   };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const guildDefaults: Record<string, unknown> = Object.fromEntries(
+    Object.keys(GUILD_CONFIGS).map((k) => {
+      const [section, settingKey] = k.split('.');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return [k, (DEFAULT_GUILD_CONFIG as any)[section]?.[settingKey]];
+    })
+  );
 
-  const defaultValue = defaults[key];
+  const defaultValue = isOwnerOnly ? ownerDefaults[key] : guildDefaults[key];
   if (defaultValue === undefined) {
     await interaction.reply({
       content: 'No default value available for this key.',
@@ -239,11 +300,18 @@ async function handleReset(interaction: ChatInputCommandInteraction): Promise<vo
   }
 
   const [section, settingKey] = key.split('.');
-  const config = getConfig();
-  const oldValue = // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (config as any)[section]?.[settingKey];
+  const guildId = interaction.guildId!;
+  const oldValue = isOwnerOnly
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? (getConfig() as any)[section]?.[settingKey]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    : (loadGuildConfig(guildId) as any)[section]?.[settingKey];
 
-  updateConfig(section as keyof Config, settingKey as never, defaultValue as never);
+  if (isOwnerOnly) {
+    updateConfig(section as keyof Config, settingKey as never, defaultValue as never);
+  } else {
+    updateGuildConfig(guildId, section as keyof GuildConfig, settingKey as never, defaultValue as never);
+  }
   logConfigChange(key, oldValue, defaultValue, interaction.user.id);
 
   await interaction.reply({

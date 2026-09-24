@@ -1,5 +1,6 @@
 import { Message as DiscordMessage } from 'discord.js';
 import { getConfig } from '../config';
+import { loadGuildConfig } from '../config/guildConfig';
 import { logger, logBotUsage } from '../utils/logger';
 import { checkRateLimit, updateRateLimit, trackUsage } from '../database/queries';
 import {
@@ -31,26 +32,43 @@ interface HistoryEntry {
   content: string;
 }
 
+// Keyed by "userId:guildId" (DMs use "dm" in place of a guild id) — was
+// keyed by userId alone, which meant a user's conversation context bled
+// across every guild/DM they talked to the bot in.
 const userHistory = new Map<string, HistoryEntry[]>();
 
-function getHistory(userId: string): HistoryEntry[] {
-  return userHistory.get(userId) || [];
+// Config is per-guild now; a DM has no guild to scope by, so it falls back
+// to the shipped default config (loadGuildConfig('dm') never has a saved
+// override file, so it always resolves to DEFAULT_GUILD_CONFIG).
+function configGuildId(discordMessage: DiscordMessage): string {
+  return discordMessage.guildId ?? 'dm';
 }
 
-function addToHistory(userId: string, userMsg: string, assistantMsg: string): void {
-  const config = getConfig();
-  let history = userHistory.get(userId) || [];
+function historyKey(userId: string, discordMessage: DiscordMessage): string {
+  return `${userId}:${configGuildId(discordMessage)}`;
+}
+
+function getHistory(userId: string, discordMessage: DiscordMessage): HistoryEntry[] {
+  return userHistory.get(historyKey(userId, discordMessage)) || [];
+}
+
+function addToHistory(userId: string, discordMessage: DiscordMessage, userMsg: string, assistantMsg: string): void {
+  // historySize isn't in the per-guild config (it was never made editable via
+  // /config, unlike systemPrompt etc.), so it stays global.
+  const globalConfig = getConfig();
+  const key = historyKey(userId, discordMessage);
+  let history = userHistory.get(key) || [];
   history.push({ role: 'user', content: userMsg });
   history.push({ role: 'assistant', content: assistantMsg });
-  const maxEntries = (config.bot.historySize || 3) * 2;
+  const maxEntries = (globalConfig.bot.historySize || 3) * 2;
   if (history.length > maxEntries) {
     history = history.slice(-maxEntries);
   }
-  userHistory.set(userId, history);
+  userHistory.set(key, history);
 }
 
-function clearHistory(userId: string): void {
-  userHistory.delete(userId);
+function clearHistory(userId: string, discordMessage: DiscordMessage): void {
+  userHistory.delete(historyKey(userId, discordMessage));
 }
 
 export { clearHistory };
@@ -148,10 +166,11 @@ export async function processMessage(
   mentionContent: string,
   callbacks?: AgentCallbacks,
 ): Promise<ChatResponse> {
-  const config = getConfig();
+  const guildId = configGuildId(discordMessage);
+  const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
 
-  const rateLimitCheck = checkRateLimit(userId);
+  const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
     return {
       success: false,
@@ -177,7 +196,7 @@ export async function processMessage(
       { role: 'system', content: config.bot.systemPrompt },
     ];
 
-    for (const entry of getHistory(userId)) {
+    for (const entry of getHistory(userId, discordMessage)) {
       context.push({ role: entry.role, content: entry.content });
     }
 
@@ -203,9 +222,9 @@ export async function processMessage(
     }
 
     const formatted = await formatResponse(aiContent);
-    addToHistory(userId, mentionContent, aiContent);
-    updateRateLimit(userId);
-    trackUsage(userId, 'message');
+    addToHistory(userId, discordMessage, mentionContent, aiContent);
+    updateRateLimit(userId, guildId);
+    trackUsage(userId, guildId, 'message');
     logBotUsage(userId, 'message', { hasImage, useVision });
 
     const messages = await splitIntoMessages(formatted.content);
@@ -222,10 +241,11 @@ export async function processReply(
   mentionContent: string,
   callbacks?: AgentCallbacks,
 ): Promise<ChatResponse> {
-  const config = getConfig();
+  const guildId = configGuildId(discordMessage);
+  const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
 
-  const rateLimitCheck = checkRateLimit(userId);
+  const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
     return {
       success: false,
@@ -245,7 +265,7 @@ export async function processReply(
       { role: 'system', content: config.bot.systemPrompt },
     ];
 
-    for (const entry of getHistory(userId)) {
+    for (const entry of getHistory(userId, discordMessage)) {
       context.push({ role: entry.role, content: entry.content });
     }
 
@@ -305,9 +325,9 @@ export async function processReply(
     }
 
     const formatted = await formatResponse(aiContent);
-    addToHistory(userId, mentionContent, aiContent);
-    updateRateLimit(userId);
-    trackUsage(userId, 'reply');
+    addToHistory(userId, discordMessage, mentionContent, aiContent);
+    updateRateLimit(userId, guildId);
+    trackUsage(userId, guildId, 'reply');
     logBotUsage(userId, 'reply', { hasImage, useVision });
 
     const messages = await splitIntoMessages(formatted.content);

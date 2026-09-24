@@ -22,18 +22,39 @@ export function getDatabase(): Database.Database {
   return db;
 }
 
+// Adds `guild_id TEXT` to a table if it's missing, backfilling existing rows
+// with DISCORD_SERVER_ID (the only guild this data could have come from
+// before multi-server support existed). Idempotent.
+function ensureGuildIdColumn(database: Database.Database, table: string): void {
+  const cols = (database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+  if (cols.includes('guild_id')) return;
+
+  database.exec(`ALTER TABLE ${table} ADD COLUMN guild_id TEXT`);
+  const legacyGuildId = process.env.DISCORD_SERVER_ID || null;
+  if (legacyGuildId) {
+    database.prepare(`UPDATE ${table} SET guild_id = ? WHERE guild_id IS NULL`).run(legacyGuildId);
+  }
+  logger.info(`Migrated ${table}: added guild_id column (backfilled with ${legacyGuildId ?? 'nothing — DISCORD_SERVER_ID unset'})`);
+}
+
 function initializeSchema(): void {
   const database = db;
 
-  // Rate limits table - standalone, no foreign keys
+  // v2: rate limits keyed by (user_id, guild_id) instead of user_id alone, so
+  // limits don't bleed across servers. Named _v2 (rather than migrating the
+  // old table's single-column PK in place, which SQLite can't do without a
+  // full rebuild) since this is just ephemeral per-minute/hour counters —
+  // losing the old table's in-flight window on upgrade is harmless.
   database.exec(`
-    CREATE TABLE IF NOT EXISTS rate_limits (
-      user_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS rate_limits_v2 (
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
       last_request DATETIME,
       requests_this_minute INTEGER DEFAULT 0,
       requests_this_hour INTEGER DEFAULT 0,
       minute_reset DATETIME,
-      hour_reset DATETIME
+      hour_reset DATETIME,
+      PRIMARY KEY (user_id, guild_id)
     )
   `);
 
@@ -52,6 +73,9 @@ function initializeSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_usage_stats_user_id ON usage_stats(user_id);
   `);
 
+  ensureGuildIdColumn(database, 'usage_stats');
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_usage_stats_guild_id ON usage_stats(guild_id)`);
+
   logger.info('Database schema initialized');
 }
 
@@ -64,6 +88,7 @@ export function closeDatabase(): void {
 
 export interface RateLimit {
   user_id: string;
+  guild_id: string;
   last_request: string | null;
   requests_this_minute: number;
   requests_this_hour: number;

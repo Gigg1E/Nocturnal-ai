@@ -5,10 +5,10 @@ import {
 } from 'discord.js';
 import { Command } from './index';
 import {
-  getConfig,
+  loadGuildConfig,
   addToBlacklist,
   removeFromBlacklist,
-} from '../../config';
+} from '../../config/guildConfig';
 import { logger } from '../../utils/logger';
 
 const OWNER_ID = process.env.OWNER_ID;
@@ -48,15 +48,8 @@ export const blacklistCommand: Command = {
   adminOnly: true,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    // Check if user is owner
-    if (interaction.user.id !== OWNER_ID) {
-      await interaction.reply({
-        content: 'This command is restricted to the bot owner.',
-        ephemeral: true,
-      });
-      return;
-    }
-
+    // Gated by setDefaultMemberPermissions(Administrator) above — any admin
+    // of this specific guild can manage its own blacklist.
     const subcommand = interaction.options.getSubcommand();
 
     switch (subcommand) {
@@ -94,7 +87,8 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  const config = getConfig();
+  const guildId = interaction.guildId!;
+  const config = loadGuildConfig(guildId);
   if (config.users.blacklist.includes(user.id)) {
     await interaction.reply({
       content: `${user.tag} is already blacklisted.`,
@@ -103,7 +97,7 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  addToBlacklist(user.id);
+  addToBlacklist(guildId, user.id);
 
   await interaction.reply({
     content: `${user.tag} has been added to the blacklist. They can no longer interact with the bot.`,
@@ -116,7 +110,8 @@ async function handleAdd(interaction: ChatInputCommandInteraction): Promise<void
 async function handleRemove(interaction: ChatInputCommandInteraction): Promise<void> {
   const user = interaction.options.getUser('user', true);
 
-  const config = getConfig();
+  const guildId = interaction.guildId!;
+  const config = loadGuildConfig(guildId);
   if (!config.users.blacklist.includes(user.id)) {
     await interaction.reply({
       content: `${user.tag} is not on the blacklist.`,
@@ -125,7 +120,7 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
-  removeFromBlacklist(user.id);
+  removeFromBlacklist(guildId, user.id);
 
   await interaction.reply({
     content: `${user.tag} has been removed from the blacklist.`,
@@ -136,7 +131,7 @@ async function handleRemove(interaction: ChatInputCommandInteraction): Promise<v
 }
 
 async function handleList(interaction: ChatInputCommandInteraction): Promise<void> {
-  const config = getConfig();
+  const config = loadGuildConfig(interaction.guildId!);
   const blacklist = config.users.blacklist;
 
   if (blacklist.length === 0) {

@@ -8,24 +8,19 @@ import { Command } from './index';
 import { checkOllamaConnection, listModels } from '../../ollama/client';
 import { checkToolsApiConnection, checkIndividualTools } from '../../ollama/tools';
 
-const OWNER_ID = process.env.OWNER_ID;
-
 const OK   = '🟢';
 const FAIL = '🔴';
 
 export const statusCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('status')
-    .setDescription('Live status check for all tool endpoints (Owner only)')
+    .setDescription('Live status check for all tool endpoints (Admin only)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   adminOnly: true,
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    if (interaction.user.id !== OWNER_ID) {
-      await interaction.reply({ content: 'Owner only.', ephemeral: true });
-      return;
-    }
-
+    // Gated by setDefaultMemberPermissions(Administrator) — read-only host
+    // health check, fine for any guild's admins to view.
     await interaction.deferReply({ ephemeral: true });
 
     // Run all checks in parallel

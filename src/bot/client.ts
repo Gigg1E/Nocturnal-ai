@@ -8,10 +8,11 @@ import {
   Collection,
 } from 'discord.js';
 import { logger } from '../utils/logger';
-import { getConfig } from '../config';
 import { handleMessageCreate } from './events/messageCreate';
 import { handleInteractionCreate } from './events/interactionCreate';
+import { handleGuildCreate } from './events/guildCreate';
 import { commands, registerCommands } from './commands';
+import { isAllowed } from '../utils/guildAllowlist';
 
 export interface BotClient extends Client {
   commands: Collection<string, unknown>;
@@ -38,7 +39,20 @@ export function createClient(): BotClient {
 
   // Register event handlers
   client.once(Events.ClientReady, async (readyClient) => {
-    logger.info(`NET.ai is online as ${readyClient.user.tag}`);
+    logger.info(`Nocturnal is online as ${readyClient.user.tag}`);
+
+    // Reconcile against the allowlist on startup — guildCreate only catches a
+    // guild being de-listed going forward (on new joins), not a guild the bot
+    // was already in before removal from data/guilds.json.
+    for (const guild of readyClient.guilds.cache.values()) {
+      if (isAllowed(guild.id)) continue;
+      logger.warn(`Leaving de-listed guild: ${guild.name} (${guild.id})`);
+      try {
+        await guild.leave();
+      } catch (error) {
+        logger.error(`Failed to leave ${guild.id}:`, error);
+      }
+    }
 
     // Register slash commands
     try {
@@ -49,6 +63,7 @@ export function createClient(): BotClient {
     }
   });
 
+  client.on(Events.GuildCreate, handleGuildCreate);
   client.on(Events.MessageCreate, handleMessageCreate);
   client.on(Events.InteractionCreate, handleInteractionCreate);
 
