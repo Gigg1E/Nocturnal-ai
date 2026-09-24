@@ -56,8 +56,14 @@ export function createClient(): BotClient {
 
     // Register slash commands
     try {
-      await registerCommands(readyClient);
-      logger.info('Slash commands registered successfully');
+      const { succeeded, total } = await registerCommands(readyClient);
+      if (total === 0) {
+        // registerCommands already logged the "no guilds" warning
+      } else if (succeeded === total) {
+        logger.info(`Slash commands registered successfully (${succeeded}/${total} guilds)`);
+      } else {
+        logger.warn(`Slash commands registered to ${succeeded}/${total} guilds — check the errors above (usually the bot isn't actually a member of the guild yet)`);
+      }
     } catch (error) {
       logger.error('Failed to register slash commands:', error);
     }
