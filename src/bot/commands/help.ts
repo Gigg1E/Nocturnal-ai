@@ -9,36 +9,42 @@ import { getConfig } from '../../config';
 export const helpCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('Get help with using NET.ai'),
+    .setDescription('Get help with using Nocturnal'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const config = getConfig();
 
     const embed = new EmbedBuilder()
-      .setTitle('NET.ai')
-      .setDescription('Technical assistant. Direct answers, no fluff.')
+      .setTitle('Nocturnal')
+      .setDescription('Chat assistant. Direct answers, no fluff.')
       .setColor(0x2f3136)
       .addFields(
         {
           name: 'How to Use',
           value: [
-            '**Mention me:** `@NET.ai your question`',
+            '**Mention me:** `@Nocturnal your question`',
             '**Reply to me:** Continue the conversation',
-            '**Send images:** `@NET.ai` + attachment',
+            '**Send images:** `@Nocturnal` + attachment',
           ].join('\n'),
         },
         {
           name: 'What I Do',
           value: [
-            '• Tech questions & networking',
-            '• Programming help',
+            '• General chat & questions',
             '• Image/screenshot analysis',
-            '• Web search, weather, DNS lookups',
+            '• Web search, weather, time, location, crypto prices',
+          ].join('\n'),
+        },
+        {
+          name: 'Make Me Yours',
+          value: [
+            '`/personality` — customize how I talk to you (follows you everywhere)',
+            '`/memory` — see or clear what I remember about you',
           ].join('\n'),
         },
         {
           name: 'Context',
-          value: `I remember your last ${config.bot.historySize} exchanges. Reply to continue, or just mention me again.`,
+          value: `I remember your last ${config.bot.historySize} exchanges in a conversation. Reply to continue, or just mention me again.`,
         }
       )
       .setTimestamp();

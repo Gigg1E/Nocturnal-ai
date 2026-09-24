@@ -76,6 +76,30 @@ function initializeSchema(): void {
   ensureGuildIdColumn(database, 'usage_stats');
   database.exec(`CREATE INDEX IF NOT EXISTS idx_usage_stats_guild_id ON usage_stats(guild_id)`);
 
+  // Per-user (not per-guild) — personality/memory follow the person across
+  // every server and, eventually, the website, since it's about who they
+  // are rather than which server they're talking in.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS user_personality (
+      user_id TEXT PRIMARY KEY,
+      personality TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Capped at 10 facts/user (enforced in code, not here) — a simple
+  // LRU-by-mention cache: touching a fact moves it to slot 1, and whatever
+  // falls off the end past slot 10 is dropped.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS user_memory (
+      user_id TEXT NOT NULL,
+      slot INTEGER NOT NULL,
+      fact TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, slot)
+    )
+  `);
+
   logger.info('Database schema initialized');
 }
 

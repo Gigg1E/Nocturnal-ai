@@ -25,9 +25,9 @@ const OWNER_ONLY_CONFIGS: Record<string, { description: string; type: string }> 
 };
 
 // Per-guild settings — any Administrator of the guild the command is run in
-// can edit these; they only affect that guild.
+// can edit these; they only affect that guild. Personality/system-prompt
+// isn't here anymore — that's per-user now, see /personality.
 const GUILD_CONFIGS: Record<string, { description: string; type: string }> = {
-  'bot.systemPrompt': { description: 'System prompt for AI', type: 'string' },
   'bot.responseFormat': { description: 'Response format (text/embed)', type: 'string' },
   'bot.maxResponseLength': { description: 'Max response length', type: 'number' },
   'bot.maxChatsPerUser': { description: 'Max chats per user', type: 'number' },

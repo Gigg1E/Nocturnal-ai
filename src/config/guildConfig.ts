@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-// The subset of the old single global config.json that's now per-guild.
-// Everything else (ollama.*, logging.*, tools.weights/keywords) stays in the
-// global config.json — those are host-resource / shared-baseline concerns,
-// not something individual guild admins should control.
+// The subset of the old single global config.json that's now per-guild —
+// operational knobs (channels, rate limits, tools, blacklist), not voice or
+// memory. Personality/system-prompt moved to src/services/personality.ts
+// (per-user, global) and ollama.*/logging.*/tools.weights stay in the
+// global config.json — host-resource / shared-baseline concerns, not
+// something individual guild admins (or even individual users) control.
 export interface GuildConfig {
   bot: {
-    systemPrompt: string;
     responseFormat: 'text' | 'embed';
     maxResponseLength: number;
     maxChatsPerUser: number;
@@ -36,8 +37,6 @@ export interface GuildConfig {
 // for a guild until an admin actually touches something.
 export const DEFAULT_GUILD_CONFIG: GuildConfig = {
   bot: {
-    systemPrompt:
-      "You are Nocturnal, a technical assistant for a networking-focused community. You provide clear, accurate, and helpful responses about technology, networking, programming, and general topics. Be professional yet approachable. When you lack information or are uncertain, indicate this clearly. You have access to external tools for web search, weather, time, and location data - use them when needed to provide accurate, up-to-date information. Keep responses concise and well-formatted for Discord.",
     responseFormat: 'text',
     maxResponseLength: 1999,
     maxChatsPerUser: 5,

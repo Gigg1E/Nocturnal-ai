@@ -19,6 +19,8 @@ import { statsCommand } from './stats';
 import { helpCommand } from './help';
 import { webhookCommand } from './webhook';
 import { statusCommand } from './status';
+import { personalityCommand } from './personality';
+import { memoryCommand } from './memory';
 
 export interface Command {
   data: SlashCommandBuilder | SlashCommandSubcommandsOnlyBuilder | Omit<SlashCommandBuilder, 'addSubcommand' | 'addSubcommandGroup'>;
@@ -39,6 +41,8 @@ const commandList: Command[] = [
   helpCommand,
   webhookCommand,
   statusCommand,
+  personalityCommand,
+  memoryCommand,
 ];
 
 for (const command of commandList) {

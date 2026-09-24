@@ -1,6 +1,8 @@
 import { Message as DiscordMessage } from 'discord.js';
 import { getConfig } from '../config';
 import { loadGuildConfig } from '../config/guildConfig';
+import { getEffectiveSystemPrompt } from './personality';
+import { maybeExtractMemory } from './memoryExtractor';
 import { logger, logBotUsage } from '../utils/logger';
 import { checkRateLimit, updateRateLimit, trackUsage } from '../database/queries';
 import {
@@ -193,7 +195,7 @@ export async function processMessage(
     const useVision = hasImage && shouldUseVisionModel(true, mentionContent);
 
     const context: OllamaMessage[] = [
-      { role: 'system', content: config.bot.systemPrompt },
+      { role: 'system', content: getEffectiveSystemPrompt(userId) },
     ];
 
     for (const entry of getHistory(userId, discordMessage)) {
@@ -226,6 +228,7 @@ export async function processMessage(
     updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'message');
     logBotUsage(userId, 'message', { hasImage, useVision });
+    maybeExtractMemory(userId, mentionContent).catch(() => {});
 
     const messages = await splitIntoMessages(formatted.content);
     return { success: true, messages, attachments: formatted.attachments };
@@ -262,7 +265,7 @@ export async function processReply(
 
   try {
     const context: OllamaMessage[] = [
-      { role: 'system', content: config.bot.systemPrompt },
+      { role: 'system', content: getEffectiveSystemPrompt(userId) },
     ];
 
     for (const entry of getHistory(userId, discordMessage)) {
@@ -329,6 +332,7 @@ export async function processReply(
     updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'reply');
     logBotUsage(userId, 'reply', { hasImage, useVision });
+    maybeExtractMemory(userId, mentionContent).catch(() => {});
 
     const messages = await splitIntoMessages(formatted.content);
     return { success: true, messages, attachments: formatted.attachments };
