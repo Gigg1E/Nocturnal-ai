@@ -1,4 +1,4 @@
-import { Message, AttachmentBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
+import { Message, AttachmentBuilder, EmbedBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { logger, logRateLimit } from '../../utils/logger';
 import { isUserBlacklisted, isChannelAllowed } from '../../config/guildConfig';
 import { processMessage, processReply } from '../../services/chat';
@@ -153,8 +153,27 @@ export async function handleMessageCreate(message: Message): Promise<void> {
       // so in a channel with several people talking at once, it's
       // unambiguous which request each part of a multi-message answer
       // belongs to.
-      const toFiles = (attachments: { name: string; data: Buffer }[]): AttachmentBuilder[] | undefined =>
-        attachments.length > 0 ? attachments.map((att) => new AttachmentBuilder(att.data, { name: att.name })) : undefined;
+      //
+      // 'image' attachments (rendered diagrams/tables) get wrapped in a
+      // small embed — a short title plus the image via attachment://,
+      // reading as one cohesive card instead of a floating file below
+      // plain text. 'file' attachments (large extracted code) aren't
+      // images, so they're sent bare, same as before.
+      const EMBED_COLOR = 0x2f3136;
+      const buildExtras = (
+        attachments: { name: string; data: Buffer; kind: 'image' | 'file'; title?: string }[]
+      ): { files?: AttachmentBuilder[]; embeds?: EmbedBuilder[] } => {
+        if (attachments.length === 0) return {};
+        const files = attachments.map((att) => new AttachmentBuilder(att.data, { name: att.name }));
+        const embeds = attachments
+          .filter((att) => att.kind === 'image')
+          .map((att) => {
+            const embed = new EmbedBuilder().setColor(EMBED_COLOR).setImage(`attachment://${att.name}`);
+            if (att.title) embed.setTitle(att.title);
+            return embed;
+          });
+        return { files, embeds: embeds.length > 0 ? embeds : undefined };
+      };
 
       let startIndex = 0;
 
@@ -164,9 +183,10 @@ export async function handleMessageCreate(message: Message): Promise<void> {
         // there for one exchange (it's already a reply, so this still
         // satisfies "every part replies to the triggering message").
         const first = response.parts[0];
-        const editOptions: { content: string; files?: AttachmentBuilder[] } = { content: first.content };
-        const firstFiles = toFiles(first.attachments);
-        if (firstFiles) editOptions.files = firstFiles;
+        const editOptions: { content: string; files?: AttachmentBuilder[]; embeds?: EmbedBuilder[] } = {
+          content: first.content,
+          ...buildExtras(first.attachments),
+        };
 
         let editFailed = false;
         await status.msg.edit(editOptions).catch(() => {
@@ -181,12 +201,16 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 
       for (let i = startIndex; i < response.parts.length; i++) {
         const part = response.parts[i];
-        const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { repliedUser: boolean } } = {
+        const opts: {
+          content: string;
+          files?: AttachmentBuilder[];
+          embeds?: EmbedBuilder[];
+          allowedMentions: { repliedUser: boolean };
+        } = {
           content: part.content,
           allowedMentions: { repliedUser: false },
+          ...buildExtras(part.attachments),
         };
-        const partFiles = toFiles(part.attachments);
-        if (partFiles) opts.files = partFiles;
         await message.reply(opts);
       }
     } else if (!response.success) {

@@ -5,6 +5,13 @@ import { renderMermaidToImage, renderTableToImage } from '../services/mermaid';
 export interface Attachment {
   name: string;
   data: Buffer;
+  // 'image' attachments (rendered diagrams/tables) get wrapped in a small
+  // embed (short title + the image) instead of sent bare — reads as one
+  // cohesive card rather than a floating file. 'file' attachments (large
+  // extracted code) aren't images, so an embed's image field doesn't apply;
+  // they're sent as a plain attachment same as before.
+  kind: 'image' | 'file';
+  title?: string;
 }
 
 // A response is broken into an ordered sequence of text/attachment
@@ -150,7 +157,8 @@ export async function formatResponse(content: string): Promise<FormattedResponse
     try {
       const imageBuffer = await renderMermaidToImage(diagrams[i]);
       if (imageBuffer) {
-        attachmentMap.set(id, { name: `${id}.png`, data: imageBuffer });
+        const title = diagrams.length > 1 ? `Diagram ${i + 1}` : 'Diagram';
+        attachmentMap.set(id, { name: `${id}.png`, data: imageBuffer, kind: 'image', title });
         formatted = formatted.replace(`[MERMAID_PLACEHOLDER_${i}]`, sentinel(id));
       } else {
         // renderMermaidToImage failed internally without throwing (its own
@@ -176,7 +184,8 @@ export async function formatResponse(content: string): Promise<FormattedResponse
     try {
       const imageBuffer = await renderTableToImage(tables[i]);
       if (imageBuffer) {
-        attachmentMap.set(id, { name: `${id}.png`, data: imageBuffer });
+        const title = tables.length > 1 ? `Table ${i + 1}` : 'Table';
+        attachmentMap.set(id, { name: `${id}.png`, data: imageBuffer, kind: 'image', title });
         formatted = formatted.replace(`[TABLE_PLACEHOLDER_${i}]`, sentinel(id));
       } else {
         // Couldn't parse/render it — fall back to the raw markdown rather
@@ -438,7 +447,7 @@ function extractLargeCodeBlocksAsFiles(content: string, attachmentMap: Map<strin
     const fileName = `${id}.${extension}`;
     codeFileIndex++;
 
-    attachmentMap.set(id, { name: fileName, data: Buffer.from(trimmedCode, 'utf-8') });
+    attachmentMap.set(id, { name: fileName, data: Buffer.from(trimmedCode, 'utf-8'), kind: 'file' });
 
     const langLabel = lang ? ` (${lang})` : '';
     return `📎 *Code${langLabel}: ${fileName}*\n${sentinel(id)}`;
