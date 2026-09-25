@@ -51,27 +51,36 @@ export function parsePreferencesInput(text: string): ParseResult {
   return { ok: true, items };
 }
 
-// Raw per-user lookup only — null means "hasn't customized," distinct from
-// getEffectivePreferences() which falls back to the global default. Kept
-// separate so /personality preferences view can tell the difference (same
-// pattern as getUserPersonality vs getEffectiveSystemPrompt).
-export function getUserPreferences(userId: string): PreferenceItem[] | null {
+// Raw per-user lookup only. Three possible states, all distinct:
+//   null  — hasn't touched preferences at all -> falls back to the default
+//   false — explicitly typed "false" to turn preferences off entirely ->
+//           inject nothing, don't fall back to the default either
+//   array — their own list
+// Kept separate from getEffectivePreferences() so /personality preferences
+// view can tell "yours" from "default" from "off" and label it correctly
+// (same split as getUserPersonality vs getEffectiveSystemPrompt).
+export function getUserPreferences(userId: string): PreferenceItem[] | false | null {
   const db = getDatabase();
   const row = db
     .prepare('SELECT preferences FROM user_preferences WHERE user_id = ?')
     .get(userId) as { preferences: string } | undefined;
   if (!row) return null;
   try {
-    return JSON.parse(row.preferences) as PreferenceItem[];
+    const parsed = JSON.parse(row.preferences);
+    if (parsed === false) return false;
+    return parsed as PreferenceItem[];
   } catch {
     return null;
   }
 }
 
 // What actually gets used: this user's own preferences if they've set any,
-// otherwise the global default from config.json.
+// nothing at all if they've explicitly disabled it, otherwise the global
+// default from config.json.
 export function getEffectivePreferences(userId: string): PreferenceItem[] {
-  return getUserPreferences(userId) ?? getConfig().bot.defaultPreferences ?? [];
+  const raw = getUserPreferences(userId);
+  if (raw === false) return [];
+  return raw ?? getConfig().bot.defaultPreferences ?? [];
 }
 
 export function setUserPreferences(userId: string, items: PreferenceItem[]): void {
@@ -83,6 +92,23 @@ export function setUserPreferences(userId: string, items: PreferenceItem[]): voi
   ).run(userId, JSON.stringify(items));
 }
 
+// Triggered by typing "false" into /personality preferences set — a toggle,
+// not a new command. Stores the JSON literal `false` (not an empty array,
+// which would be indistinguishable from "hasn't set anything" in some
+// contexts, and not a deleted row, which would fall back to the default
+// instead of actually turning it off).
+export function disableUserPreferences(userId: string): void {
+  const db = getDatabase();
+  db.prepare(
+    `INSERT INTO user_preferences (user_id, preferences, updated_at)
+     VALUES (?, 'false', datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET preferences = excluded.preferences, updated_at = excluded.updated_at`
+  ).run(userId);
+}
+
+// Deletes the row entirely, returning to "hasn't customized" -- which
+// resolves back to the global default, same as it always has. This is how
+// you get from "off" back to "default" (as opposed to setting your own list).
 export function resetUserPreferences(userId: string): void {
   const db = getDatabase();
   db.prepare('DELETE FROM user_preferences WHERE user_id = ?').run(userId);

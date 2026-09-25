@@ -16,6 +16,7 @@ import {
   getUserPreferences,
   getEffectivePreferences,
   setUserPreferences,
+  disableUserPreferences,
   resetUserPreferences,
   MAX_PREFERENCES_LENGTH,
 } from '../../services/preferences';
@@ -45,11 +46,11 @@ export const personalityCommand: Command = {
         .addSubcommand((sub) =>
           sub
             .setName('set')
-            .setDescription('Set a comma-separated list of "topic: value" pairs')
+            .setDescription('Set "topic: value" pairs, or type false to turn preferences off entirely')
             .addStringOption((opt) =>
               opt
                 .setName('list')
-                .setDescription('e.g. "favorite anime: X, favorite food: ramen, hates: mornings"')
+                .setDescription('e.g. "favorite anime: X, favorite food: ramen" — or just "false" to disable')
                 .setRequired(true)
                 .setMaxLength(MAX_PREFERENCES_LENGTH)
             )
@@ -116,6 +117,17 @@ async function handlePreferences(
 ): Promise<void> {
   if (subcommand === 'view') {
     const custom = getUserPreferences(userId);
+
+    if (custom === false) {
+      const embed = new EmbedBuilder()
+        .setTitle("Nocturnal's Preferences")
+        .setColor(0x2f3136)
+        .setDescription("**Off** — you turned these off, so nothing gets injected, not even the default.")
+        .setFooter({ text: 'Use /personality preferences reset to go back to the default, or set a list to turn it back on.' });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+
     const items = getEffectivePreferences(userId);
     const embed = new EmbedBuilder()
       .setTitle("Nocturnal's Preferences")
@@ -135,10 +147,20 @@ async function handlePreferences(
 
   if (subcommand === 'set') {
     const list = interaction.options.getString('list', true).trim();
+
+    if (list.toLowerCase() === 'false') {
+      disableUserPreferences(userId);
+      await interaction.reply({
+        content: "Preferences turned off — nothing gets injected, not even the default. Use /personality preferences reset to bring the default back, or set a list to turn it back on.",
+        ephemeral: true,
+      });
+      return;
+    }
+
     const result = parsePreferencesInput(list);
     if (!result.ok) {
       await interaction.reply({
-        content: `Couldn't parse that: ${result.error}\nFormat: \`topic: value, topic: value, ...\` — e.g. \`favorite anime: X, favorite food: ramen\`. Avoid extra commas inside a single value.`,
+        content: `Couldn't parse that: ${result.error}\nFormat: \`topic: value, topic: value, ...\` — e.g. \`favorite anime: X, favorite food: ramen\`. Avoid extra commas inside a single value. Type \`false\` instead to turn preferences off entirely.`,
         ephemeral: true,
       });
       return;
