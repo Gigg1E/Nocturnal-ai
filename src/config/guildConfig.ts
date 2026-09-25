@@ -11,6 +11,9 @@ export interface GuildConfig {
   bot: {
     responseFormat: 'text' | 'embed';
     maxResponseLength: number;
+    // Max concurrent in-flight requests per user (not a pace/cooldown —
+    // see src/services/chat.ts's inFlightCounts). Was declared but never
+    // enforced until that fix landed.
     maxChatsPerUser: number;
     cooldownSeconds: number;
   };
@@ -39,7 +42,7 @@ export const DEFAULT_GUILD_CONFIG: GuildConfig = {
   bot: {
     responseFormat: 'text',
     maxResponseLength: 1999,
-    maxChatsPerUser: 5,
+    maxChatsPerUser: 1,
     cooldownSeconds: 5,
   },
   tools: {

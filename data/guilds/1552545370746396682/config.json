@@ -2,7 +2,7 @@
   "bot": {
     "responseFormat": "text",
     "maxResponseLength": 1999,
-    "maxChatsPerUser": 5,
+    "maxChatsPerUser": 1,
     "cooldownSeconds": 5
   },
   "tools": {

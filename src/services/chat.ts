@@ -39,6 +39,15 @@ interface HistoryEntry {
 // across every guild/DM they talked to the bot in.
 const userHistory = new Map<string, HistoryEntry[]>();
 
+// Concurrent in-flight request count per user+guild. Separate from the
+// DB-backed cooldown/rate limit, which is pace-based and only updates its
+// timestamp once a response finishes — so several rapid messages sent
+// before the first one completes can all pass the cooldown check and each
+// spawn their own agent loop. This closes that gap and is what actually
+// caps how many requests one user can have running at once (e.g. under
+// CPU contention from several people talking at the same time).
+const inFlightCounts = new Map<string, number>();
+
 // Config is per-guild now; a DM has no guild to scope by, so it falls back
 // to the shipped default config (loadGuildConfig('dm') never has a saved
 // override file, so it always resolves to DEFAULT_GUILD_CONFIG).
@@ -171,6 +180,11 @@ export async function processMessage(
   const guildId = configGuildId(discordMessage);
   const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
+  const concurrencyKey = historyKey(userId, discordMessage);
+
+  if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
+    return { success: false, messages: [], rateLimited: true, error: 'concurrent_limit' };
+  }
 
   const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
@@ -187,6 +201,7 @@ export async function processMessage(
     return { success: true, messages: [getLongFormRejection()] };
   }
 
+  inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
   try {
     const imageAttachments = discordMessage.attachments.filter(
       (att) => att.contentType?.startsWith('image/') ?? false
@@ -235,6 +250,10 @@ export async function processMessage(
   } catch (error) {
     logger.error('Error processing message:', error);
     return { success: false, messages: ['Something went wrong. Try again.'], error: (error as Error).message };
+  } finally {
+    const remaining = (inFlightCounts.get(concurrencyKey) ?? 1) - 1;
+    if (remaining <= 0) inFlightCounts.delete(concurrencyKey);
+    else inFlightCounts.set(concurrencyKey, remaining);
   }
 }
 
@@ -247,6 +266,11 @@ export async function processReply(
   const guildId = configGuildId(discordMessage);
   const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
+  const concurrencyKey = historyKey(userId, discordMessage);
+
+  if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
+    return { success: false, messages: [], rateLimited: true, error: 'concurrent_limit' };
+  }
 
   const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
@@ -263,6 +287,7 @@ export async function processReply(
     return { success: true, messages: [getLongFormRejection()] };
   }
 
+  inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
   try {
     const context: OllamaMessage[] = [
       { role: 'system', content: getEffectiveSystemPrompt(userId) },
@@ -339,5 +364,9 @@ export async function processReply(
   } catch (error) {
     logger.error('Error processing reply:', error);
     return { success: false, messages: ['Something went wrong. Try again.'], error: (error as Error).message };
+  } finally {
+    const remaining = (inFlightCounts.get(concurrencyKey) ?? 1) - 1;
+    if (remaining <= 0) inFlightCounts.delete(concurrencyKey);
+    else inFlightCounts.set(concurrencyKey, remaining);
   }
 }

@@ -54,8 +54,11 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   // Object wrapper so TypeScript doesn't narrow the property to null via
   // control-flow analysis after async closures mutate it.
   // Each turn gets its own object, so concurrent users are fully isolated by reference.
-  const status = { msg: null as Message | null };
+  // `creating` closes a race between the thinking-timer below and onToolStart
+  // both trying to create the status message at nearly the same moment.
+  const status = { msg: null as Message | null, creating: false };
   const turnStart = Date.now();
+  const THINKING_DELAY_MS = 4000;
 
   interface ToolEntry { name: string; args: Record<string, unknown>; done: boolean }
   const toolEntries: ToolEntry[] = [];
@@ -71,11 +74,15 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     toolEntries.push({ name: toolName, args, done: false });
     try {
       const content = buildStatusLines();
-      if (!status.msg) {
-        status.msg = await message.reply({ content, allowedMentions: { repliedUser: false } });
-      } else {
+      if (status.msg) {
         await status.msg.edit(content);
+      } else if (!status.creating) {
+        status.creating = true;
+        status.msg = await message.reply({ content, allowedMentions: { repliedUser: false } });
+        status.creating = false;
       }
+      // else: the thinking-timer is mid-creation — it'll pick up tool
+      // progress on its next onToolStart/onToolDone call once status.msg lands.
     } catch (err) {
       logger.warn('Failed to send/edit status message:', err);
     }
@@ -89,6 +96,25 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     }
   };
 
+  // If nothing (no tool call) has produced a status message within
+  // THINKING_DELAY_MS, this is taking a while — post a visible placeholder
+  // that's an actual reply to the triggering message, so it's unambiguous
+  // which request it belongs to even with several people talking at once.
+  const thinkingTimer: NodeJS.Timeout = setTimeout(() => {
+    if (status.msg || status.creating) return;
+    status.creating = true;
+    message
+      .reply({ content: '🤔 Thinking...', allowedMentions: { repliedUser: false } })
+      .then((m) => {
+        status.msg = m;
+        status.creating = false;
+      })
+      .catch((err) => {
+        status.creating = false;
+        logger.warn('Failed to send thinking indicator:', err);
+      });
+  }, THINKING_DELAY_MS);
+
   try {
     let response;
     if (repliedToMessage) {
@@ -98,6 +124,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     }
 
     clearInterval(typingInterval);
+    clearTimeout(thinkingTimer);
 
     // Compact final summary: `✓ tool`  `✓ tool`  •  3.1s
     if (status.msg && toolEntries.length > 0) {
@@ -107,9 +134,12 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     }
 
     if (response.rateLimited) {
-      const cooldownMsg = response.cooldownRemaining
-        ? `Wait ${response.cooldownRemaining}s.`
-        : 'Slow down.';
+      const cooldownMsg =
+        response.error === 'concurrent_limit'
+          ? "Still working on your last message — hang tight."
+          : response.cooldownRemaining
+            ? `Wait ${response.cooldownRemaining}s.`
+            : 'Slow down.';
       const target = status.msg ?? message;
       await target.reply({ content: cooldownMsg, allowedMentions: { repliedUser: false } });
       logRateLimit(message.author.id, response.error || 'rate_limited');
@@ -117,7 +147,27 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     }
 
     if (response.success && response.messages.length > 0) {
-      if (status.msg) {
+      if (status.msg && toolEntries.length === 0) {
+        // Only the "thinking" placeholder fired, no tools ran — edit it
+        // into the real answer instead of leaving two messages sitting
+        // there for one exchange.
+        const editOptions: { content: string; files?: AttachmentBuilder[] } = {
+          content: response.messages[0],
+        };
+        if (response.attachments && response.attachments.length > 0) {
+          editOptions.files = response.attachments.map(
+            (att) => new AttachmentBuilder(att.data, { name: att.name })
+          );
+        }
+        const edited = status.msg;
+        await edited.edit(editOptions).catch(async () => {
+          // Edit failed (e.g. message deleted) — fall back to a fresh reply.
+          await message.reply({ content: response.messages[0], allowedMentions: { repliedUser: false } });
+        });
+        for (let i = 1; i < response.messages.length; i++) {
+          await channel.send({ content: response.messages[i], allowedMentions: { users: [] } });
+        }
+      } else if (status.msg) {
         // Tools were used — send the answer as a separate channel message
         const firstOptions: {
           content: string;
@@ -137,7 +187,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
           await channel.send({ content: response.messages[i], allowedMentions: { users: [] } });
         }
       } else {
-        // No tools — reply directly to the user's message
+        // No tools, no thinking placeholder — reply directly to the user's message
         const firstOptions: {
           content: string;
           files?: AttachmentBuilder[];
@@ -165,6 +215,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     }
   } catch (error) {
     clearInterval(typingInterval);
+    clearTimeout(thinkingTimer);
     logger.error('Error in messageCreate handler:', error);
     try {
       const target = status.msg ?? message;

@@ -30,7 +30,7 @@ const OWNER_ONLY_CONFIGS: Record<string, { description: string; type: string }> 
 const GUILD_CONFIGS: Record<string, { description: string; type: string }> = {
   'bot.responseFormat': { description: 'Response format (text/embed)', type: 'string' },
   'bot.maxResponseLength': { description: 'Max response length', type: 'number' },
-  'bot.maxChatsPerUser': { description: 'Max chats per user', type: 'number' },
+  'bot.maxChatsPerUser': { description: 'Max concurrent in-flight requests per user', type: 'number' },
   'bot.cooldownSeconds': { description: 'Cooldown between messages', type: 'number' },
   'tools.enabled': { description: 'Enable external tools', type: 'boolean' },
   'tools.triggerThreshold': { description: 'Tool trigger threshold', type: 'number' },
