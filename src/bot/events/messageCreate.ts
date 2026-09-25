@@ -146,70 +146,75 @@ export async function handleMessageCreate(message: Message): Promise<void> {
       return;
     }
 
-    if (response.success && response.messages.length > 0) {
+    if (response.success && response.parts.length > 0) {
+      // Each part carries its own attachments (an image/diagram/table/file
+      // rides along with whichever chunk of text introduced it), so a
+      // response with several attachments becomes several sequential
+      // messages instead of one message with everything bundled at the end.
+      const toFiles = (attachments: { name: string; data: Buffer }[]): AttachmentBuilder[] | undefined =>
+        attachments.length > 0 ? attachments.map((att) => new AttachmentBuilder(att.data, { name: att.name })) : undefined;
+
       if (status.msg && toolEntries.length === 0) {
         // Only the "thinking" placeholder fired, no tools ran — edit it
-        // into the real answer instead of leaving two messages sitting
-        // there for one exchange.
-        const editOptions: { content: string; files?: AttachmentBuilder[] } = {
-          content: response.messages[0],
-        };
-        if (response.attachments && response.attachments.length > 0) {
-          editOptions.files = response.attachments.map(
-            (att) => new AttachmentBuilder(att.data, { name: att.name })
-          );
-        }
+        // into the first part of the real answer instead of leaving two
+        // messages sitting there for one exchange.
+        const first = response.parts[0];
+        const editOptions: { content: string; files?: AttachmentBuilder[] } = { content: first.content };
+        const firstFiles = toFiles(first.attachments);
+        if (firstFiles) editOptions.files = firstFiles;
         const edited = status.msg;
         await edited.edit(editOptions).catch(async () => {
           // Edit failed (e.g. message deleted) — fall back to a fresh reply.
-          await message.reply({ content: response.messages[0], allowedMentions: { repliedUser: false } });
+          await message.reply({ content: first.content, allowedMentions: { repliedUser: false } });
         });
-        for (let i = 1; i < response.messages.length; i++) {
-          await channel.send({ content: response.messages[i], allowedMentions: { users: [] } });
+        for (let i = 1; i < response.parts.length; i++) {
+          const part = response.parts[i];
+          const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { users: string[] } } = {
+            content: part.content,
+            allowedMentions: { users: [] },
+          };
+          const partFiles = toFiles(part.attachments);
+          if (partFiles) opts.files = partFiles;
+          await channel.send(opts);
         }
       } else if (status.msg) {
-        // Tools were used — send the answer as a separate channel message
-        const firstOptions: {
-          content: string;
-          files?: AttachmentBuilder[];
-          allowedMentions: { users: string[] };
-        } = {
-          content: response.messages[0],
-          allowedMentions: { users: [] },
-        };
-        if (response.attachments && response.attachments.length > 0) {
-          firstOptions.files = response.attachments.map(
-            (att) => new AttachmentBuilder(att.data, { name: att.name })
-          );
-        }
-        await channel.send(firstOptions);
-        for (let i = 1; i < response.messages.length; i++) {
-          await channel.send({ content: response.messages[i], allowedMentions: { users: [] } });
+        // Tools were used — send the answer as separate channel message(s)
+        for (const part of response.parts) {
+          const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { users: string[] } } = {
+            content: part.content,
+            allowedMentions: { users: [] },
+          };
+          const partFiles = toFiles(part.attachments);
+          if (partFiles) opts.files = partFiles;
+          await channel.send(opts);
         }
       } else {
-        // No tools, no thinking placeholder — reply directly to the user's message
-        const firstOptions: {
-          content: string;
-          files?: AttachmentBuilder[];
-          allowedMentions: { repliedUser: boolean };
-        } = {
-          content: response.messages[0],
-          allowedMentions: { repliedUser: false },
-        };
-        if (response.attachments && response.attachments.length > 0) {
-          firstOptions.files = response.attachments.map(
-            (att) => new AttachmentBuilder(att.data, { name: att.name })
-          );
-        }
-        await message.reply(firstOptions);
-        for (let i = 1; i < response.messages.length; i++) {
-          await channel.send({ content: response.messages[i], allowedMentions: { users: [] } });
+        // No tools, no thinking placeholder — reply directly to the user's
+        // message with the first part, rest follow as channel messages.
+        for (let i = 0; i < response.parts.length; i++) {
+          const part = response.parts[i];
+          const partFiles = toFiles(part.attachments);
+          if (i === 0) {
+            const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { repliedUser: boolean } } = {
+              content: part.content,
+              allowedMentions: { repliedUser: false },
+            };
+            if (partFiles) opts.files = partFiles;
+            await message.reply(opts);
+          } else {
+            const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { users: string[] } } = {
+              content: part.content,
+              allowedMentions: { users: [] },
+            };
+            if (partFiles) opts.files = partFiles;
+            await channel.send(opts);
+          }
         }
       }
     } else if (!response.success) {
       const target = status.msg ?? message;
       await target.reply({
-        content: response.messages[0] || 'Something went wrong.',
+        content: response.parts[0]?.content || 'Something went wrong.',
         allowedMentions: { repliedUser: false },
       });
     }

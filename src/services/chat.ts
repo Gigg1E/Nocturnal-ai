@@ -13,7 +13,7 @@ import {
   shouldUseVisionModel,
 } from '../ollama/client';
 import { TOOL_SCHEMAS, dispatchTool } from '../ollama/tools';
-import { formatResponse, splitIntoMessages, detectLongFormRequest, getLongFormRejection } from '../ollama/formatter';
+import { formatResponse, buildOutgoingMessages, detectLongFormRequest, getLongFormRejection, OutgoingMessage } from '../ollama/formatter';
 
 // ==================== AGENT LOOP LIMITS ====================
 
@@ -88,8 +88,7 @@ export { clearHistory };
 
 export interface ChatResponse {
   success: boolean;
-  messages: string[];
-  attachments?: Array<{ name: string; data: Buffer }>;
+  parts: OutgoingMessage[];
   error?: string;
   rateLimited?: boolean;
   cooldownRemaining?: number;
@@ -183,14 +182,14 @@ export async function processMessage(
   const concurrencyKey = historyKey(userId, discordMessage);
 
   if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
-    return { success: false, messages: [], rateLimited: true, error: 'concurrent_limit' };
+    return { success: false, parts: [], rateLimited: true, error: 'concurrent_limit' };
   }
 
   const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
     return {
       success: false,
-      messages: [],
+      parts: [],
       rateLimited: true,
       cooldownRemaining: rateLimitCheck.cooldownRemaining,
       error: rateLimitCheck.reason,
@@ -198,7 +197,7 @@ export async function processMessage(
   }
 
   if (detectLongFormRequest(mentionContent)) {
-    return { success: true, messages: [getLongFormRejection()] };
+    return { success: true, parts: [{ content: getLongFormRejection(), attachments: [] }] };
   }
 
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
@@ -245,11 +244,15 @@ export async function processMessage(
     logBotUsage(userId, 'message', { hasImage, useVision });
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
-    const messages = await splitIntoMessages(formatted.content);
-    return { success: true, messages, attachments: formatted.attachments };
+    const parts = buildOutgoingMessages(formatted.segments);
+    return { success: true, parts };
   } catch (error) {
     logger.error('Error processing message:', error);
-    return { success: false, messages: ['Something went wrong. Try again.'], error: (error as Error).message };
+    return {
+      success: false,
+      parts: [{ content: 'Something went wrong. Try again.', attachments: [] }],
+      error: (error as Error).message,
+    };
   } finally {
     const remaining = (inFlightCounts.get(concurrencyKey) ?? 1) - 1;
     if (remaining <= 0) inFlightCounts.delete(concurrencyKey);
@@ -269,14 +272,14 @@ export async function processReply(
   const concurrencyKey = historyKey(userId, discordMessage);
 
   if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
-    return { success: false, messages: [], rateLimited: true, error: 'concurrent_limit' };
+    return { success: false, parts: [], rateLimited: true, error: 'concurrent_limit' };
   }
 
   const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
     return {
       success: false,
-      messages: [],
+      parts: [],
       rateLimited: true,
       cooldownRemaining: rateLimitCheck.cooldownRemaining,
       error: rateLimitCheck.reason,
@@ -284,7 +287,7 @@ export async function processReply(
   }
 
   if (detectLongFormRequest(mentionContent)) {
-    return { success: true, messages: [getLongFormRejection()] };
+    return { success: true, parts: [{ content: getLongFormRejection(), attachments: [] }] };
   }
 
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
@@ -359,11 +362,15 @@ export async function processReply(
     logBotUsage(userId, 'reply', { hasImage, useVision });
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
-    const messages = await splitIntoMessages(formatted.content);
-    return { success: true, messages, attachments: formatted.attachments };
+    const parts = buildOutgoingMessages(formatted.segments);
+    return { success: true, parts };
   } catch (error) {
     logger.error('Error processing reply:', error);
-    return { success: false, messages: ['Something went wrong. Try again.'], error: (error as Error).message };
+    return {
+      success: false,
+      parts: [{ content: 'Something went wrong. Try again.', attachments: [] }],
+      error: (error as Error).message,
+    };
   } finally {
     const remaining = (inFlightCounts.get(concurrencyKey) ?? 1) - 1;
     if (remaining <= 0) inFlightCounts.delete(concurrencyKey);

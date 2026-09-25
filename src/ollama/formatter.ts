@@ -2,14 +2,27 @@ import { getConfig } from '../config';
 import { logger } from '../utils/logger';
 import { renderMermaidToImage, renderTableToImage } from '../services/mermaid';
 
+export interface Attachment {
+  name: string;
+  data: Buffer;
+}
+
+// A response is broken into an ordered sequence of text/attachment
+// segments (rather than one flat string + a bag of attachments) so an
+// image/file can be sent in the same Discord message as the text that
+// introduces it, instead of every attachment landing bundled onto the
+// final message regardless of where it was actually referenced.
+export type FormattedSegment = { text: string } | { attachment: Attachment };
+
 export interface FormattedResponse {
+  segments: FormattedSegment[];
+}
+
+// A single outgoing Discord message: some text (possibly empty, if this
+// message is attachment-only) plus zero or more attachments.
+export interface OutgoingMessage {
   content: string;
-  attachments: Array<{
-    name: string;
-    data: Buffer;
-  }>;
-  hasMore: boolean;
-  continuation?: string;
+  attachments: Attachment[];
 }
 
 // Unicode math symbol mappings for common LaTeX
@@ -103,12 +116,24 @@ const SUBSCRIPTS: Record<string, string> = {
   'n': 'ₙ', 'p': 'ₚ', 's': 'ₛ', 't': 'ₜ',
 };
 
+// Sentinel marker used to track where an attachment occurred within the
+// text as it passes through several extraction/cleanup steps. Uses a NUL
+// byte, which can't appear in normal AI text output, so it's safe to
+// split on later without colliding with real content.
+const SENTINEL_PREFIX = '\u0000ATTACH:';
+const SENTINEL_SUFFIX = '\u0000';
+const SENTINEL_SPLIT_REGEX = /\u0000ATTACH:([^\u0000]+)\u0000/;
+
+function sentinel(id: string): string {
+  return `${SENTINEL_PREFIX}${id}${SENTINEL_SUFFIX}`;
+}
+
 /**
- * Main formatting function - converts AI output to Discord-friendly format
+ * Main formatting function - converts AI output to Discord-friendly format,
+ * returning an ordered sequence of text/attachment segments.
  */
 export async function formatResponse(content: string): Promise<FormattedResponse> {
-  const config = getConfig();
-  const attachments: FormattedResponse['attachments'] = [];
+  const attachmentMap = new Map<string, Attachment>();
 
   // Remove Qwen3 thinking tags if present
   let formatted = removeThinkingTags(content);
@@ -120,20 +145,18 @@ export async function formatResponse(content: string): Promise<FormattedResponse
   const { text: textWithoutMermaid, diagrams } = extractMermaidDiagrams(formatted);
   formatted = textWithoutMermaid;
 
-  // Render mermaid diagrams to images
   for (let i = 0; i < diagrams.length; i++) {
+    const id = `diagram_${i + 1}`;
     try {
       const imageBuffer = await renderMermaidToImage(diagrams[i]);
       if (imageBuffer) {
-        attachments.push({
-          name: `diagram_${i + 1}.png`,
-          data: imageBuffer,
-        });
-        formatted = formatted.replace(`[MERMAID_PLACEHOLDER_${i}]`, `\n*See attached diagram ${i + 1}*\n`);
+        attachmentMap.set(id, { name: `${id}.png`, data: imageBuffer });
+        formatted = formatted.replace(`[MERMAID_PLACEHOLDER_${i}]`, sentinel(id));
       } else {
         // renderMermaidToImage failed internally without throwing (its own
-        // try/catch swallows the error and returns null) — without this,
-        // the literal "[MERMAID_PLACEHOLDER_N]" text was left in the reply.
+        // try/catch swallows the error and returns null) — without this
+        // fallback, the literal "[MERMAID_PLACEHOLDER_N]" text was left in
+        // the reply.
         formatted = formatted.replace(`[MERMAID_PLACEHOLDER_${i}]`, '\n*[Diagram could not be rendered]*\n');
       }
     } catch (error) {
@@ -149,14 +172,12 @@ export async function formatResponse(content: string): Promise<FormattedResponse
   formatted = textWithoutTables;
 
   for (let i = 0; i < tables.length; i++) {
+    const id = `table_${i + 1}`;
     try {
       const imageBuffer = await renderTableToImage(tables[i]);
       if (imageBuffer) {
-        attachments.push({
-          name: `table_${i + 1}.png`,
-          data: imageBuffer,
-        });
-        formatted = formatted.replace(`[TABLE_PLACEHOLDER_${i}]`, `\n*See attached table ${i + 1}*\n`);
+        attachmentMap.set(id, { name: `${id}.png`, data: imageBuffer });
+        formatted = formatted.replace(`[TABLE_PLACEHOLDER_${i}]`, sentinel(id));
       } else {
         // Couldn't parse/render it — fall back to the raw markdown rather
         // than silently dropping the content.
@@ -168,19 +189,40 @@ export async function formatResponse(content: string): Promise<FormattedResponse
     }
   }
 
-  // Extract all code blocks as file attachments
-  const extracted = extractCodeBlocksAsFiles(formatted, attachments);
-  formatted = extracted.content;
+  // Extract large code blocks as file attachments. Small snippets are left
+  // completely untouched — Discord renders ``` fences as syntax-highlighted
+  // code directly in the message, which reads far better inline than a
+  // separate downloadable file for a 5-line example.
+  formatted = extractLargeCodeBlocksAsFiles(formatted, attachmentMap);
 
   // Clean up any remaining problematic formatting
   formatted = cleanupFormatting(formatted);
 
-  // Return full formatted content - splitting is handled by splitIntoMessages
-  return {
-    content: formatted,
-    attachments: extracted.attachments,
-    hasMore: false,
-  };
+  const segments = splitOnSentinels(formatted, attachmentMap);
+
+  return { segments };
+}
+
+/**
+ * Splits formatted text on attachment sentinels into an ordered sequence
+ * of text/attachment segments.
+ */
+function splitOnSentinels(content: string, attachmentMap: Map<string, Attachment>): FormattedSegment[] {
+  const parts = content.split(SENTINEL_SPLIT_REGEX);
+  const segments: FormattedSegment[] = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) {
+      // Even indices are the text between sentinels (String.split with a
+      // capturing group interleaves [text, captured, text, captured, ...]).
+      if (parts[i]) segments.push({ text: parts[i] });
+    } else {
+      const attachment = attachmentMap.get(parts[i]);
+      if (attachment) segments.push({ attachment });
+    }
+  }
+
+  return segments;
 }
 
 /**
@@ -366,48 +408,46 @@ const LANG_EXTENSIONS: Record<string, string> = {
   tsx: 'tsx',
 };
 
-interface ExtractedCodeBlocks {
-  content: string;
-  attachments: Array<{ name: string; data: Buffer }>;
-}
+// Code blocks at or under this size read better as an inline ``` fence
+// (Discord renders those with syntax highlighting directly in the message)
+// than as a separate downloadable file — only genuinely large blocks are
+// worth extracting.
+const CODE_EXTRACTION_MIN_LINES = 25;
+const CODE_EXTRACTION_MIN_CHARS = 1000;
 
 /**
- * Extract all code blocks as file attachments
+ * Extract only large code blocks as file attachments (see thresholds
+ * above); short ones are left untouched so they render inline.
  */
-function extractCodeBlocksAsFiles(
-  content: string,
-  existingAttachments: Array<{ name: string; data: Buffer }>
-): ExtractedCodeBlocks {
-  const attachments = [...existingAttachments];
+function extractLargeCodeBlocksAsFiles(content: string, attachmentMap: Map<string, Attachment>): string {
   let codeFileIndex = 1;
 
-  const newContent = content.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+  return content.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
     const trimmedCode = code.trim();
     if (!trimmedCode) {
       return ''; // Skip empty code blocks
     }
 
-    // Extract as file attachment
+    const lineCount = trimmedCode.split('\n').length;
+    if (lineCount < CODE_EXTRACTION_MIN_LINES && trimmedCode.length < CODE_EXTRACTION_MIN_CHARS) {
+      return match; // Small enough to stay inline — leave the fence as-is.
+    }
+
     const extension = LANG_EXTENSIONS[lang.toLowerCase()] || 'txt';
-    const fileName = `code_${codeFileIndex}.${extension}`;
+    const id = `code_${codeFileIndex}`;
+    const fileName = `${id}.${extension}`;
     codeFileIndex++;
 
-    attachments.push({
-      name: fileName,
-      data: Buffer.from(trimmedCode, 'utf-8'),
-    });
+    attachmentMap.set(id, { name: fileName, data: Buffer.from(trimmedCode, 'utf-8') });
 
-    // Replace with reference to attachment
     const langLabel = lang ? ` (${lang})` : '';
-    return `📎 *Code${langLabel}: ${fileName}*`;
+    return `📎 *Code${langLabel}: ${fileName}*\n${sentinel(id)}`;
   });
-
-  return { content: newContent, attachments };
 }
 
 /**
  * Truncate code blocks that are still too large after extraction attempt
- * (fallback for splitIntoMessages which doesn't have attachment context)
+ * (fallback for chunk-splitting which doesn't have attachment context)
  */
 function truncateOversizedCodeBlocks(content: string, maxLength: number): string {
   const maxCodeBlockSize = Math.floor(maxLength * 0.8);
@@ -607,19 +647,21 @@ function findTextSplitPoint(text: string, maxLength: number): number {
 }
 
 /**
- * Split a response into multiple messages if needed
+ * Splits a block of text into Discord-sized chunks. Always returns at
+ * least one element (possibly '') so an attachment with no preceding text
+ * still gets a message slot.
  */
-export async function splitIntoMessages(content: string): Promise<string[]> {
-  const config = getConfig();
-  const maxLength = config.bot.maxResponseLength;
-  const messages: string[] = [];
+function splitTextIntoChunks(text: string, maxLength: number): string[] {
+  let processedContent = truncateOversizedCodeBlocks(text, maxLength);
+  const chunks: string[] = [];
 
-  // First, handle oversized code blocks
-  let processedContent = truncateOversizedCodeBlocks(content, maxLength);
+  if (processedContent.trim().length === 0) {
+    return [''];
+  }
 
   while (processedContent.length > 0) {
     if (processedContent.length <= maxLength) {
-      messages.push(processedContent);
+      chunks.push(processedContent);
       break;
     }
 
@@ -632,31 +674,86 @@ export async function splitIntoMessages(content: string): Promise<string[]> {
       chunk += '\n```';
     }
 
-    messages.push(chunk);
+    chunks.push(chunk);
     processedContent = processedContent.slice(splitPoint).trim();
 
     // If next chunk starts mid-code-block, add opening
     if (processedContent.length > 0) {
       const remainingOpenBlocks = (processedContent.match(/```/g) || []).length;
       if (remainingOpenBlocks % 2 !== 0) {
-        // Find the language from the unclosed block
         const langMatch = processedContent.match(/^([^`\n]*)\n/);
         if (langMatch && !langMatch[1].includes('```')) {
           processedContent = '```\n' + processedContent;
         }
       }
     }
+  }
 
-    // Safety limit - for a use-bot, 3 messages is plenty
-    if (messages.length >= 3) {
-      if (processedContent.length > 0) {
-        messages.push('*[Response truncated]*');
-      }
-      break;
+  return chunks;
+}
+
+// Safety cap on how many separate Discord messages one AI response can
+// turn into. Higher than the old text-only cap (3) since attachments now
+// legitimately need their own message slots, not just long text.
+const MAX_OUTGOING_MESSAGES = 6;
+
+/**
+ * Turns formatted segments into an ordered list of Discord messages to
+ * send in sequence. Each attachment is grouped together with whatever text
+ * immediately preceded it (Discord has no true inline-attachment concept —
+ * files/images are always a separate block from text within one message,
+ * never interleaved mid-paragraph — so putting them in the *same* message
+ * as their introducing text is as close to "inline" as the platform allows).
+ * If that preceding text is itself too long for one message, it's split
+ * into several text-only chunks first, with the attachment riding along on
+ * the last one (closest to where it was actually referenced).
+ */
+export function buildOutgoingMessages(segments: FormattedSegment[]): OutgoingMessage[] {
+  const config = getConfig();
+  const maxLength = config.bot.maxResponseLength;
+
+  interface Group { text: string; attachment?: Attachment }
+  const groups: Group[] = [];
+  let currentText = '';
+
+  for (const seg of segments) {
+    if ('text' in seg) {
+      currentText += seg.text;
+    } else {
+      groups.push({ text: currentText, attachment: seg.attachment });
+      currentText = '';
+    }
+  }
+  if (currentText.trim() || groups.length === 0) {
+    groups.push({ text: currentText });
+  }
+
+  const outgoing: OutgoingMessage[] = [];
+
+  for (const group of groups) {
+    const chunks = splitTextIntoChunks(group.text, maxLength);
+    for (let i = 0; i < chunks.length; i++) {
+      const isLastChunkOfGroup = i === chunks.length - 1;
+      outgoing.push({
+        content: chunks[i],
+        attachments: isLastChunkOfGroup && group.attachment ? [group.attachment] : [],
+      });
     }
   }
 
-  return messages;
+  // Drop any part that ended up with neither text nor an attachment (e.g.
+  // the AI returned genuinely empty content) — Discord rejects a message
+  // with no content, no embeds, and no files, and there's nothing useful
+  // to send anyway.
+  const nonEmpty = outgoing.filter((part) => part.content.trim().length > 0 || part.attachments.length > 0);
+
+  if (nonEmpty.length > MAX_OUTGOING_MESSAGES) {
+    const truncated = nonEmpty.slice(0, MAX_OUTGOING_MESSAGES - 1);
+    truncated.push({ content: '*[Response truncated]*', attachments: [] });
+    return truncated;
+  }
+
+  return nonEmpty;
 }
 
 /**
