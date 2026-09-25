@@ -11,6 +11,27 @@ function isSendableChannel(channel: any): channel is SendableChannel {
   return typeof channel.send === 'function';
 }
 
+// Varied, casual stand-ins for the old hardcoded "🤔 Thinking..." -- picked
+// randomly so it doesn't read as a copy-pasted template every time. Plain
+// text on purpose (no emoji spam) to match how someone would actually text
+// "one sec" rather than a templated bot status line.
+const THINKING_PHRASES = [
+  'one sec',
+  'hold on',
+  'hang on',
+  'gimme a sec',
+  'give me a sec',
+  'one moment',
+  'hold up',
+  'lemme think',
+  'let me think about that',
+  'hmm, one sec',
+];
+
+function randomThinkingPhrase(): string {
+  return THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+}
+
 export async function handleMessageCreate(message: Message): Promise<void> {
   if (message.author.bot) return;
 
@@ -104,7 +125,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     if (status.msg || status.creating) return;
     status.creating = true;
     message
-      .reply({ content: '🤔 Thinking...', allowedMentions: { repliedUser: false } })
+      .reply({ content: randomThinkingPhrase(), allowedMentions: { repliedUser: false } })
       .then((m) => {
         status.msg = m;
         status.creating = false;
