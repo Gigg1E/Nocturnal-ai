@@ -2,7 +2,13 @@ import { getDatabase } from '../database/schema';
 import { getConfig } from '../config';
 import { formatMemoryBlock } from './memory';
 
-export const MAX_PERSONALITY_LENGTH = 800;
+// Discord hard-caps a slash command string option at 6000 chars
+// (s.number().greaterThanOrEqual(1).lessThanOrEqual(6000) in
+// @discordjs/builders). 4000 leaves headroom under that ceiling while
+// still being a big jump from the old 800 -- this becomes the entire
+// system prompt, but with a 262k-token context window on the models in
+// use, a few thousand extra characters isn't a real cost concern.
+export const MAX_PERSONALITY_LENGTH = 4000;
 
 export function getUserPersonality(userId: string): string | null {
   const db = getDatabase();

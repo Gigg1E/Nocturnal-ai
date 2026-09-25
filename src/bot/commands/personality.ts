@@ -26,6 +26,7 @@ export const personalityCommand: Command = {
             .setName('description')
             .setDescription(`How Nocturnal should act with you (max ${MAX_PERSONALITY_LENGTH} chars)`)
             .setRequired(true)
+            .setMaxLength(MAX_PERSONALITY_LENGTH)
         )
     )
     .addSubcommand((sub) => sub.setName('reset').setDescription('Go back to the default personality')),
