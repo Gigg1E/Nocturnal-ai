@@ -101,7 +101,12 @@ async function buildUserMessage(discordMessage: DiscordMessage, mentionContent: 
 
   const message: OllamaMessage = {
     role: 'user',
-    content: mentionContent || (hasImage ? 'What do you see in this image?' : ''),
+    // No synthesized fallback prompt when an image has no caption —
+    // 'What do you see in this image?' used to force description-mode
+    // (headers, bullet points, a report) instead of a natural in-character
+    // reaction. Empty content + the image is enough; the persona and
+    // system prompt already carry the tone.
+    content: mentionContent,
   };
 
   if (hasImage) {
