@@ -114,12 +114,22 @@ export function resetUserPreferences(userId: string): void {
   db.prepare('DELETE FROM user_preferences WHERE user_id = ?').run(userId);
 }
 
-// Framed the same way the memory block already is (proven to keep facts
-// from getting force-fed into unrelated replies): background flavor to
-// draw on situationally, not a script to recite.
+// Tightened after observing the original wording let the model lean on the
+// same one or two preferences repeatedly across turns -- including
+// restating them in the very reply defending against being called out for
+// it. "Mention one if relevant" wasn't restrictive enough, especially for
+// open, no-topic prompts ("what's on your mind") where the preference list
+// is the richest content available, so the model reasonably treated all of
+// it as fair game. This version is explicit about defaulting to silence,
+// capping at one per reply, and not repeating whatever was already used
+// earlier in the conversation. A/B tested directly against the repro case
+// (an open "what's on your mind" after the model had already leaned on the
+// same two preferences the turn before): the old wording repeated the same
+// theme plus stacked in two more; this version used exactly one, and not
+// the one already used.
 export function formatPreferencesBlock(userId: string): string | null {
   const items = getEffectivePreferences(userId);
   if (!items || items.length === 0) return null;
   const lines = items.map((i) => `- ${i.topic}: ${i.value}`).join('\n');
-  return `Your own preferences/opinions — bring one up naturally if it's actually relevant to what's being discussed, don't list them or force them into unrelated conversation:\n${lines}`;
+  return `Your own preferences/opinions — background flavor only, not a script. Most replies shouldn't reference any of these at all; only bring one up when it's the obviously natural thing to say, not just loosely connectable. Never mention more than one in a single reply. If you've already brought up one of these earlier in this conversation, don't reach for it again — leave it out or pick a different one, don't just repeat yourself.\n${lines}`;
 }
