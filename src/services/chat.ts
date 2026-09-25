@@ -49,19 +49,22 @@ function configGuildId(discordMessage: DiscordMessage): string {
   return discordMessage.guildId ?? 'dm';
 }
 
-function historyKey(userId: string, discordMessage: DiscordMessage): string {
-  return `${userId}:${configGuildId(discordMessage)}`;
+// Takes a guildId string directly (not a DiscordMessage) so it's callable
+// from both message-handling (via configGuildId above) and slash commands
+// (which have interaction.guildId, not a Message) — e.g. /clearchat.
+function historyKey(userId: string, guildId: string): string {
+  return `${userId}:${guildId}`;
 }
 
-function getHistory(userId: string, discordMessage: DiscordMessage): HistoryEntry[] {
-  return userHistory.get(historyKey(userId, discordMessage)) || [];
+function getHistory(userId: string, guildId: string): HistoryEntry[] {
+  return userHistory.get(historyKey(userId, guildId)) || [];
 }
 
-function addToHistory(userId: string, discordMessage: DiscordMessage, userMsg: string, assistantMsg: string): void {
+function addToHistory(userId: string, guildId: string, userMsg: string, assistantMsg: string): void {
   // historySize isn't in the per-guild config (it was never made editable via
   // /config, unlike systemPrompt etc.), so it stays global.
   const globalConfig = getConfig();
-  const key = historyKey(userId, discordMessage);
+  const key = historyKey(userId, guildId);
   let history = userHistory.get(key) || [];
   history.push({ role: 'user', content: userMsg });
   history.push({ role: 'assistant', content: assistantMsg });
@@ -72,11 +75,15 @@ function addToHistory(userId: string, discordMessage: DiscordMessage, userMsg: s
   userHistory.set(key, history);
 }
 
-function clearHistory(userId: string, discordMessage: DiscordMessage): void {
-  userHistory.delete(historyKey(userId, discordMessage));
+// Clears only the rolling conversation history (recent back-and-forth) —
+// not the persistent per-user memory facts (see services/memory.ts /
+// /memory), which are a completely separate, intentionally durable store.
+export function clearHistory(userId: string, guildId: string): boolean {
+  const key = historyKey(userId, guildId);
+  const had = userHistory.has(key);
+  userHistory.delete(key);
+  return had;
 }
-
-export { clearHistory };
 
 /**
  * Builds the user-turn message, attaching an image (base64) when the
@@ -201,7 +208,7 @@ export async function processMessage(
   const guildId = configGuildId(discordMessage);
   const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
-  const concurrencyKey = historyKey(userId, discordMessage);
+  const concurrencyKey = historyKey(userId, guildId);
 
   if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
     return { success: false, parts: [], rateLimited: true, error: 'concurrent_limit' };
@@ -228,7 +235,7 @@ export async function processMessage(
       { role: 'system', content: getEffectiveSystemPrompt(userId) },
     ];
 
-    for (const entry of getHistory(userId, discordMessage)) {
+    for (const entry of getHistory(userId, guildId)) {
       context.push({ role: entry.role, content: entry.content });
     }
 
@@ -238,7 +245,7 @@ export async function processMessage(
     const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
 
     const formatted = await formatResponse(aiContent);
-    addToHistory(userId, discordMessage, mentionContent, aiContent);
+    addToHistory(userId, guildId, mentionContent, aiContent);
     updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'message');
     logBotUsage(userId, 'message', { hasImage });
@@ -269,7 +276,7 @@ export async function processReply(
   const guildId = configGuildId(discordMessage);
   const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
-  const concurrencyKey = historyKey(userId, discordMessage);
+  const concurrencyKey = historyKey(userId, guildId);
 
   if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
     return { success: false, parts: [], rateLimited: true, error: 'concurrent_limit' };
@@ -296,7 +303,7 @@ export async function processReply(
       { role: 'system', content: getEffectiveSystemPrompt(userId) },
     ];
 
-    for (const entry of getHistory(userId, discordMessage)) {
+    for (const entry of getHistory(userId, guildId)) {
       context.push({ role: entry.role, content: entry.content });
     }
 
@@ -334,7 +341,7 @@ export async function processReply(
     const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
 
     const formatted = await formatResponse(aiContent);
-    addToHistory(userId, discordMessage, mentionContent, aiContent);
+    addToHistory(userId, guildId, mentionContent, aiContent);
     updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'reply');
     logBotUsage(userId, 'reply', { hasImage });
