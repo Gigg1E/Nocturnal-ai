@@ -21,13 +21,6 @@ import {
   MAX_FACT_LENGTH,
 } from '../../services/memory';
 import { setUserPersonality, resetUserPersonality, MAX_PERSONALITY_LENGTH } from '../../services/personality';
-import {
-  parsePreferencesInput,
-  setUserPreferences,
-  disableUserPreferences,
-  resetUserPreferences,
-  MAX_PREFERENCES_LENGTH,
-} from '../../services/preferences';
 
 export async function handleInteractionCreate(interaction: Interaction): Promise<void> {
   try {
@@ -117,9 +110,6 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
     case 'personality_action':
       await handlePersonalityActionSelect(interaction);
       break;
-    case 'preferences_action':
-      await handlePreferencesActionSelect(interaction);
-      break;
     default:
       await interaction.reply({
         content: 'Action not available.',
@@ -142,9 +132,6 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
       break;
     case 'personality_set_modal':
       await handlePersonalitySetModal(interaction);
-      break;
-    case 'preferences_set_modal':
-      await handlePreferencesSetModal(interaction);
       break;
     default:
       await interaction.reply({
@@ -255,75 +242,6 @@ async function handlePersonalitySetModal(interaction: ModalSubmitInteraction): P
   setUserPersonality(interaction.user.id, description);
   await interaction.reply({
     content: 'Personality updated. This follows you across every server Nocturnal is in.',
-    ephemeral: true,
-  });
-}
-
-// ==================== /preferences component handlers ====================
-
-async function handlePreferencesActionSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  const choice = interaction.values[0];
-  const userId = interaction.user.id;
-
-  if (choice === 'set') {
-    const modal = new ModalBuilder()
-      .setCustomId('preferences_set_modal')
-      .setTitle('Set your preferences')
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder()
-            .setCustomId('list')
-            .setLabel('topic: value, topic: value, ... (or "false")')
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('favorite anime: X, favorite food: ramen, hates: mornings')
-            .setMaxLength(MAX_PREFERENCES_LENGTH)
-            .setRequired(true)
-        )
-      );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (choice === 'off') {
-    disableUserPreferences(userId);
-    await interaction.update({
-      content: "Preferences turned off — nothing gets injected, not even the default.",
-      embeds: [],
-      components: [],
-    });
-    return;
-  }
-
-  if (choice === 'reset') {
-    resetUserPreferences(userId);
-    await interaction.update({ content: 'Preferences reset to default.', embeds: [], components: [] });
-  }
-}
-
-async function handlePreferencesSetModal(interaction: ModalSubmitInteraction): Promise<void> {
-  const list = interaction.fields.getTextInputValue('list').trim();
-  const userId = interaction.user.id;
-
-  if (list.toLowerCase() === 'false') {
-    disableUserPreferences(userId);
-    await interaction.reply({
-      content: "Preferences turned off — nothing gets injected, not even the default.",
-      ephemeral: true,
-    });
-    return;
-  }
-
-  const result = parsePreferencesInput(list);
-  if (!result.ok) {
-    await interaction.reply({
-      content: `Couldn't parse that: ${result.error}\nFormat: \`topic: value, topic: value, ...\` — e.g. \`favorite anime: X, favorite food: ramen\`. Avoid extra commas inside a single value. Type \`false\` instead to turn preferences off entirely.`,
-      ephemeral: true,
-    });
-    return;
-  }
-  setUserPreferences(userId, result.items);
-  await interaction.reply({
-    content: `Set ${result.items.length} preference${result.items.length === 1 ? '' : 's'}.`,
     ephemeral: true,
   });
 }

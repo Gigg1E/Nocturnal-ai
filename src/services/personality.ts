@@ -1,7 +1,6 @@
 import { getDatabase } from '../database/schema';
 import { getConfig } from '../config';
 import { formatMemoryBlock } from './memory';
-import { formatPreferencesBlock } from './preferences';
 
 // Discord hard-caps a slash command string option at 6000 chars
 // (s.number().greaterThanOrEqual(1).lessThanOrEqual(6000) in
@@ -38,17 +37,14 @@ export function resetUserPersonality(userId: string): void {
 // not per-guild; a guild's only remaining bot-behavior knobs are the
 // operational ones in GuildConfig (channels, rate limits, tools).
 //
-// Composed in three layers, personality primary and always fully expressed,
-// preferences/memory secondary and framed as situational background rather
-// than a script — personality says HOW to talk, preferences are WHAT the AI
-// itself likes (its own flavor), memory is what it knows about this user.
-// Putting preference-style facts inside the personality text (framed as
-// core identity) is what caused them to get recited on every reply instead
-// of surfacing only when actually relevant.
+// Composed in two layers: personality (primary, always fully expressed)
+// then memory (secondary, framed as situational background — "mention if
+// relevant" — not a script). A third "preferences" layer (the AI's own
+// opinions/likes) existed briefly but got removed -- even after tightening
+// its framing it kept surfacing in prompting scenarios where it didn't
+// belong, so it wasn't holding up as a real feature.
 export function getEffectiveSystemPrompt(userId: string): string {
   const base = getUserPersonality(userId) ?? getConfig().bot.systemPrompt;
-  const blocks = [base, formatPreferencesBlock(userId), formatMemoryBlock(userId)].filter(
-    (b): b is string => Boolean(b)
-  );
-  return blocks.join('\n\n');
+  const memoryBlock = formatMemoryBlock(userId);
+  return memoryBlock ? `${base}\n\n${memoryBlock}` : base;
 }

@@ -9,10 +9,8 @@ import { Command } from './index';
 import { getConfig } from '../../config';
 import { getUserPersonality } from '../../services/personality';
 
-// Bare command, no subcommands — preferences moved to its own top-level
-// /preferences command (see preferences.ts) rather than nesting a
-// subcommand group under here; two clean single-purpose commands read
-// easier than one command with a subgroup buried inside it.
+// Bare command, no subcommands — shows current state plus a dropdown for
+// what to do next instead of requiring a subcommand up front.
 export const personalityCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('personality')

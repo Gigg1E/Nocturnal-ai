@@ -5,10 +5,6 @@ import { logger } from '../utils/logger';
 export interface BotConfig {
   name: string;
   systemPrompt: string;
-  // Global fallback for /personality preferences -- same pattern as
-  // systemPrompt: used until a user sets their own via
-  // /personality preferences set.
-  defaultPreferences: { topic: string; value: string }[];
   responseFormat: 'text' | 'embed';
   maxResponseLength: number;
   historySize: number;

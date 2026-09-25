@@ -100,20 +100,6 @@ function initializeSchema(): void {
     )
   `);
 
-  // User-authored (not auto-extracted like user_memory), so no slot/eviction
-  // machinery needed -- one JSON array of {topic, value} pairs per user,
-  // replaced wholesale on /personality preferences set. Structured rather
-  // than a free blob so it can be validated on input, formatted as a clean
-  // list rather than a run-on sentence, and (later) filtered per-item for
-  // relevance instead of always injecting the whole thing.
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS user_preferences (
-      user_id TEXT PRIMARY KEY,
-      preferences TEXT NOT NULL,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
   logger.info('Database schema initialized');
 }
 

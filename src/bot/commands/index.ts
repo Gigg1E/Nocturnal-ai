@@ -22,7 +22,6 @@ import { statusCommand } from './status';
 import { personalityCommand } from './personality';
 import { memoryCommand } from './memory';
 import { clearChatCommand } from './clearchat';
-import { preferencesCommand } from './preferences';
 
 export interface Command {
   data: SlashCommandBuilder | SlashCommandSubcommandsOnlyBuilder | Omit<SlashCommandBuilder, 'addSubcommand' | 'addSubcommandGroup'>;
@@ -46,7 +45,6 @@ const commandList: Command[] = [
   personalityCommand,
   memoryCommand,
   clearChatCommand,
-  preferencesCommand,
 ];
 
 for (const command of commandList) {
