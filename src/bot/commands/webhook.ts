@@ -378,8 +378,13 @@ async function handleTest(interaction: ChatInputCommandInteraction): Promise<voi
   const id = interaction.options.getInteger('id', true);
 
   try {
-    await webhookApi('POST', `/api/subscriptions/${id}/test`);
-    await interaction.editReply({ content: `Test notification fired for subscription #${id}. Check the configured channel.` });
+    const result = await webhookApi('POST', `/api/subscriptions/${id}/test`);
+    const sent = result.sent !== false;
+    await interaction.editReply({
+      content: sent
+        ? `Test notification fired for subscription #${id}. Check the configured channel.`
+        : `Ran fine, but nothing came back to send for subscription #${id} (e.g. no search results or no new alerts right now) — that's why nothing showed up in the channel.`,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ content: `Test failed: ${msg}` });
