@@ -14,6 +14,7 @@ import {
 import {
   parsePreferencesInput,
   getUserPreferences,
+  getEffectivePreferences,
   setUserPreferences,
   resetUserPreferences,
   MAX_PREFERENCES_LENGTH,
@@ -54,7 +55,7 @@ export const personalityCommand: Command = {
             )
         )
         .addSubcommand((sub) => sub.setName('view').setDescription("See Nocturnal's current preferences"))
-        .addSubcommand((sub) => sub.setName('reset').setDescription('Clear all preferences'))
+        .addSubcommand((sub) => sub.setName('reset').setDescription('Go back to the default preferences'))
     ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -114,13 +115,15 @@ async function handlePreferences(
   userId: string
 ): Promise<void> {
   if (subcommand === 'view') {
-    const items = getUserPreferences(userId);
+    const custom = getUserPreferences(userId);
+    const items = getEffectivePreferences(userId);
     const embed = new EmbedBuilder()
       .setTitle("Nocturnal's Preferences")
       .setColor(0x2f3136)
       .setDescription(
-        items && items.length > 0
-          ? items.map((i) => `**${i.topic}:** ${i.value}`).join('\n')
+        items.length > 0
+          ? `${custom ? '**Custom:**' : "**Default** (you haven't customized this):"}\n` +
+            items.map((i) => `**${i.topic}:** ${i.value}`).join('\n')
           : 'None set — use /personality preferences set to give it some.'
       )
       .setFooter({
@@ -150,6 +153,6 @@ async function handlePreferences(
 
   if (subcommand === 'reset') {
     resetUserPreferences(userId);
-    await interaction.reply({ content: 'Cleared all preferences.', ephemeral: true });
+    await interaction.reply({ content: 'Preferences reset to default.', ephemeral: true });
   }
 }

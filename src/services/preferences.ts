@@ -1,4 +1,5 @@
 import { getDatabase } from '../database/schema';
+import { getConfig } from '../config';
 
 export const MAX_PREFERENCES_LENGTH = 2000;
 
@@ -50,6 +51,10 @@ export function parsePreferencesInput(text: string): ParseResult {
   return { ok: true, items };
 }
 
+// Raw per-user lookup only — null means "hasn't customized," distinct from
+// getEffectivePreferences() which falls back to the global default. Kept
+// separate so /personality preferences view can tell the difference (same
+// pattern as getUserPersonality vs getEffectiveSystemPrompt).
 export function getUserPreferences(userId: string): PreferenceItem[] | null {
   const db = getDatabase();
   const row = db
@@ -61,6 +66,12 @@ export function getUserPreferences(userId: string): PreferenceItem[] | null {
   } catch {
     return null;
   }
+}
+
+// What actually gets used: this user's own preferences if they've set any,
+// otherwise the global default from config.json.
+export function getEffectivePreferences(userId: string): PreferenceItem[] {
+  return getUserPreferences(userId) ?? getConfig().bot.defaultPreferences ?? [];
 }
 
 export function setUserPreferences(userId: string, items: PreferenceItem[]): void {
@@ -81,7 +92,7 @@ export function resetUserPreferences(userId: string): void {
 // from getting force-fed into unrelated replies): background flavor to
 // draw on situationally, not a script to recite.
 export function formatPreferencesBlock(userId: string): string | null {
-  const items = getUserPreferences(userId);
+  const items = getEffectivePreferences(userId);
   if (!items || items.length === 0) return null;
   const lines = items.map((i) => `- ${i.topic}: ${i.value}`).join('\n');
   return `Your own preferences/opinions — bring one up naturally if it's actually relevant to what's being discussed, don't list them or force them into unrelated conversation:\n${lines}`;
