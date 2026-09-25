@@ -2,179 +2,44 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
 } from 'discord.js';
 import { Command } from './index';
 import { getConfig } from '../../config';
-import {
-  getUserPersonality,
-  setUserPersonality,
-  resetUserPersonality,
-  MAX_PERSONALITY_LENGTH,
-} from '../../services/personality';
-import {
-  parsePreferencesInput,
-  getUserPreferences,
-  getEffectivePreferences,
-  setUserPreferences,
-  disableUserPreferences,
-  resetUserPreferences,
-  MAX_PREFERENCES_LENGTH,
-} from '../../services/preferences';
+import { getUserPersonality } from '../../services/personality';
 
+// Bare command, no subcommands — preferences moved to its own top-level
+// /preferences command (see preferences.ts) rather than nesting a
+// subcommand group under here; two clean single-purpose commands read
+// easier than one command with a subgroup buried inside it.
 export const personalityCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('personality')
-    .setDescription('Customize how Nocturnal talks to you (applies everywhere, not just this server)')
-    .addSubcommand((sub) => sub.setName('view').setDescription('See your current personality setting'))
-    .addSubcommand((sub) =>
-      sub
-        .setName('set')
-        .setDescription('Set your own personality for Nocturnal')
-        .addStringOption((opt) =>
-          opt
-            .setName('description')
-            .setDescription(`How Nocturnal should act with you (max ${MAX_PERSONALITY_LENGTH} chars)`)
-            .setRequired(true)
-            .setMaxLength(MAX_PERSONALITY_LENGTH)
-        )
-    )
-    .addSubcommand((sub) => sub.setName('reset').setDescription('Go back to the default personality'))
-    .addSubcommandGroup((group) =>
-      group
-        .setName('preferences')
-        .setDescription("Nocturnal's own opinions/likes — secondary flavor, not how it talks")
-        .addSubcommand((sub) =>
-          sub
-            .setName('set')
-            .setDescription('Set "topic: value" pairs, or type false to turn preferences off entirely')
-            .addStringOption((opt) =>
-              opt
-                .setName('list')
-                .setDescription('e.g. "favorite anime: X, favorite food: ramen" — or just "false" to disable')
-                .setRequired(true)
-                .setMaxLength(MAX_PREFERENCES_LENGTH)
-            )
-        )
-        .addSubcommand((sub) => sub.setName('view').setDescription("See Nocturnal's current preferences"))
-        .addSubcommand((sub) => sub.setName('reset').setDescription('Go back to the default preferences'))
-    ),
+    .setDescription('Customize how Nocturnal talks to you (applies everywhere, not just this server)'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const subcommand = interaction.options.getSubcommand();
-    const group = interaction.options.getSubcommandGroup(false);
     const userId = interaction.user.id;
+    const custom = getUserPersonality(userId);
 
-    if (group === 'preferences') {
-      await handlePreferences(interaction, subcommand, userId);
-      return;
+    const embed = new EmbedBuilder()
+      .setTitle('Your Nocturnal Personality')
+      .setColor(0x2f3136)
+      .setDescription(custom ? `**Custom:**\n${custom}` : `**Default** (you haven't customized this):\n${getConfig().bot.systemPrompt}`)
+      .setFooter({ text: 'This applies to you everywhere Nocturnal is.' });
+
+    const options = [{ label: 'Set a new personality', value: 'set', description: 'Replace it with your own' }];
+    if (custom) {
+      options.push({ label: 'Reset to default', value: 'reset', description: 'Go back to the shipped default' });
     }
 
-    if (subcommand === 'view') {
-      const custom = getUserPersonality(userId);
-      const embed = new EmbedBuilder()
-        .setTitle('Your Nocturnal Personality')
-        .setColor(0x2f3136)
-        .setDescription(custom ? `**Custom:**\n${custom}` : `**Default** (you haven't customized this):\n${getConfig().bot.systemPrompt}`)
-        .setFooter({
-          text: custom ? 'This applies to you everywhere Nocturnal is.' : 'Use /personality set to make it yours.',
-        });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('personality_action')
+      .setPlaceholder('What do you want to do?')
+      .addOptions(options);
 
-    if (subcommand === 'set') {
-      const description = interaction.options.getString('description', true).trim();
-      if (description.length === 0) {
-        await interaction.reply({ content: "Personality can't be empty.", ephemeral: true });
-        return;
-      }
-      if (description.length > MAX_PERSONALITY_LENGTH) {
-        await interaction.reply({
-          content: `That's ${description.length} characters — keep it under ${MAX_PERSONALITY_LENGTH}.`,
-          ephemeral: true,
-        });
-        return;
-      }
-      setUserPersonality(userId, description);
-      await interaction.reply({
-        content: 'Personality updated. This follows you across every server Nocturnal is in.',
-        ephemeral: true,
-      });
-      return;
-    }
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 
-    if (subcommand === 'reset') {
-      resetUserPersonality(userId);
-      await interaction.reply({ content: 'Personality reset to default.', ephemeral: true });
-    }
+    await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
   },
 };
-
-async function handlePreferences(
-  interaction: ChatInputCommandInteraction,
-  subcommand: string,
-  userId: string
-): Promise<void> {
-  if (subcommand === 'view') {
-    const custom = getUserPreferences(userId);
-
-    if (custom === false) {
-      const embed = new EmbedBuilder()
-        .setTitle("Nocturnal's Preferences")
-        .setColor(0x2f3136)
-        .setDescription("**Off** — you turned these off, so nothing gets injected, not even the default.")
-        .setFooter({ text: 'Use /personality preferences reset to go back to the default, or set a list to turn it back on.' });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    const items = getEffectivePreferences(userId);
-    const embed = new EmbedBuilder()
-      .setTitle("Nocturnal's Preferences")
-      .setColor(0x2f3136)
-      .setDescription(
-        items.length > 0
-          ? `${custom ? '**Custom:**' : "**Default** (you haven't customized this):"}\n` +
-            items.map((i) => `**${i.topic}:** ${i.value}`).join('\n')
-          : 'None set — use /personality preferences set to give it some.'
-      )
-      .setFooter({
-        text: 'Secondary flavor, referenced when relevant — not repeated every message.',
-      });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-    return;
-  }
-
-  if (subcommand === 'set') {
-    const list = interaction.options.getString('list', true).trim();
-
-    if (list.toLowerCase() === 'false') {
-      disableUserPreferences(userId);
-      await interaction.reply({
-        content: "Preferences turned off — nothing gets injected, not even the default. Use /personality preferences reset to bring the default back, or set a list to turn it back on.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const result = parsePreferencesInput(list);
-    if (!result.ok) {
-      await interaction.reply({
-        content: `Couldn't parse that: ${result.error}\nFormat: \`topic: value, topic: value, ...\` — e.g. \`favorite anime: X, favorite food: ramen\`. Avoid extra commas inside a single value. Type \`false\` instead to turn preferences off entirely.`,
-        ephemeral: true,
-      });
-      return;
-    }
-    setUserPreferences(userId, result.items);
-    await interaction.reply({
-      content: `Set ${result.items.length} preference${result.items.length === 1 ? '' : 's'}. Use /personality preferences view to see them.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (subcommand === 'reset') {
-    resetUserPreferences(userId);
-    await interaction.reply({ content: 'Preferences reset to default.', ephemeral: true });
-  }
-}
