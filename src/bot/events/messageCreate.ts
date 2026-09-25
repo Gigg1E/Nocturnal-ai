@@ -148,68 +148,46 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 
     if (response.success && response.parts.length > 0) {
       // Each part carries its own attachments (an image/diagram/table/file
-      // rides along with whichever chunk of text introduced it), so a
-      // response with several attachments becomes several sequential
-      // messages instead of one message with everything bundled at the end.
+      // rides along with whichever chunk of text introduced it). Every part
+      // replies directly to the triggering message — not just the first —
+      // so in a channel with several people talking at once, it's
+      // unambiguous which request each part of a multi-message answer
+      // belongs to.
       const toFiles = (attachments: { name: string; data: Buffer }[]): AttachmentBuilder[] | undefined =>
         attachments.length > 0 ? attachments.map((att) => new AttachmentBuilder(att.data, { name: att.name })) : undefined;
 
+      let startIndex = 0;
+
       if (status.msg && toolEntries.length === 0) {
         // Only the "thinking" placeholder fired, no tools ran — edit it
-        // into the first part of the real answer instead of leaving two
-        // messages sitting there for one exchange.
+        // into the first part instead of leaving two messages sitting
+        // there for one exchange (it's already a reply, so this still
+        // satisfies "every part replies to the triggering message").
         const first = response.parts[0];
         const editOptions: { content: string; files?: AttachmentBuilder[] } = { content: first.content };
         const firstFiles = toFiles(first.attachments);
         if (firstFiles) editOptions.files = firstFiles;
-        const edited = status.msg;
-        await edited.edit(editOptions).catch(async () => {
-          // Edit failed (e.g. message deleted) — fall back to a fresh reply.
-          await message.reply({ content: first.content, allowedMentions: { repliedUser: false } });
+
+        let editFailed = false;
+        await status.msg.edit(editOptions).catch(() => {
+          editFailed = true;
         });
-        for (let i = 1; i < response.parts.length; i++) {
-          const part = response.parts[i];
-          const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { users: string[] } } = {
-            content: part.content,
-            allowedMentions: { users: [] },
-          };
-          const partFiles = toFiles(part.attachments);
-          if (partFiles) opts.files = partFiles;
-          await channel.send(opts);
+        if (!editFailed) {
+          startIndex = 1;
         }
-      } else if (status.msg) {
-        // Tools were used — send the answer as separate channel message(s)
-        for (const part of response.parts) {
-          const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { users: string[] } } = {
-            content: part.content,
-            allowedMentions: { users: [] },
-          };
-          const partFiles = toFiles(part.attachments);
-          if (partFiles) opts.files = partFiles;
-          await channel.send(opts);
-        }
-      } else {
-        // No tools, no thinking placeholder — reply directly to the user's
-        // message with the first part, rest follow as channel messages.
-        for (let i = 0; i < response.parts.length; i++) {
-          const part = response.parts[i];
-          const partFiles = toFiles(part.attachments);
-          if (i === 0) {
-            const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { repliedUser: boolean } } = {
-              content: part.content,
-              allowedMentions: { repliedUser: false },
-            };
-            if (partFiles) opts.files = partFiles;
-            await message.reply(opts);
-          } else {
-            const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { users: string[] } } = {
-              content: part.content,
-              allowedMentions: { users: [] },
-            };
-            if (partFiles) opts.files = partFiles;
-            await channel.send(opts);
-          }
-        }
+        // If the edit failed (e.g. message deleted), fall through — part[0]
+        // gets sent as a fresh reply by the loop below instead.
+      }
+
+      for (let i = startIndex; i < response.parts.length; i++) {
+        const part = response.parts[i];
+        const opts: { content: string; files?: AttachmentBuilder[]; allowedMentions: { repliedUser: boolean } } = {
+          content: part.content,
+          allowedMentions: { repliedUser: false },
+        };
+        const partFiles = toFiles(part.attachments);
+        if (partFiles) opts.files = partFiles;
+        await message.reply(opts);
       }
     } else if (!response.success) {
       const target = status.msg ?? message;
