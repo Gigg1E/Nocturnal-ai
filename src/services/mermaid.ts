@@ -143,6 +143,137 @@ ${escapeHtml(mermaidCode)}
 }
 
 /**
+ * Render a markdown table (Discord doesn't render table syntax at all — it
+ * just shows the literal pipe characters) to a PNG image, reusing the same
+ * browser instance and dark theme as mermaid diagrams above.
+ */
+export async function renderTableToImage(markdownTable: string): Promise<Buffer | null> {
+  let page: Page | null = null;
+
+  try {
+    const { headers, rows } = parseMarkdownTable(markdownTable);
+    if (headers.length === 0) return null;
+
+    const browserInstance = await getBrowser();
+    page = await browserInstance.newPage();
+    await page.setViewportSize({ width: 1200, height: 800 });
+
+    const headerHtml = headers.map((h) => `<th>${mdCellToHtml(h)}</th>`).join('');
+    const rowsHtml = rows
+      .map((row) => `<tr>${row.map((cell) => `<td>${mdCellToHtml(cell)}</td>`).join('')}</tr>`)
+      .join('');
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    background: #2f3136;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  table {
+    border-collapse: collapse;
+    background: #36393f;
+    border-radius: 8px;
+    overflow: hidden;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 15px;
+    color: #dcddde;
+  }
+  th, td {
+    padding: 10px 16px;
+    text-align: left;
+    border-bottom: 1px solid #40444b;
+    max-width: 320px;
+  }
+  th {
+    background: #2b2d31;
+    color: #fff;
+    font-weight: 600;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  tr:nth-child(even) td {
+    background: #32353b;
+  }
+  strong {
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+  <table id="rendered-table">
+    <thead><tr>${headerHtml}</tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+</body>
+</html>`;
+
+    await page.setContent(html, { waitUntil: 'networkidle' });
+
+    const table = await page.$('#rendered-table');
+    if (!table) {
+      throw new Error('Table element not found');
+    }
+
+    const screenshot = await table.screenshot({ type: 'png' });
+    return screenshot;
+  } catch (error) {
+    logger.error('Failed to render table:', error);
+    return null;
+  } finally {
+    if (page) {
+      await page.close();
+    }
+  }
+}
+
+/**
+ * Escapes a table cell's text and converts markdown **bold** to <strong>.
+ * Order matters — escape first so the bold regex only ever matches literal
+ * asterisks, never anything introduced by escaping.
+ */
+function mdCellToHtml(cell: string): string {
+  const escaped = cell
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+
+/**
+ * Parses a GitHub-flavored markdown table (header row, separator row of
+ * dashes/colons, then data rows) into headers + rows. Doesn't honor column
+ * alignment (:---/---:/:---:) — not worth the complexity for a Discord
+ * comparison table.
+ */
+function parseMarkdownTable(text: string): { headers: string[]; rows: string[][] } {
+  const lines = text
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) return { headers: [], rows: [] };
+
+  const splitRow = (line: string): string[] =>
+    line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+
+  const headers = splitRow(lines[0]);
+  const dataStart = /^[\s:|-]+$/.test(lines[1]) ? 2 : 1;
+  const rows = lines.slice(dataStart).map(splitRow).filter((r) => r.length > 0);
+
+  return { headers, rows };
+}
+
+/**
  * Validate mermaid syntax before rendering
  */
 export function validateMermaidSyntax(code: string): boolean {

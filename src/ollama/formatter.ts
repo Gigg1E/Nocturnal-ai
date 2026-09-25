@@ -1,6 +1,6 @@
 import { getConfig } from '../config';
 import { logger } from '../utils/logger';
-import { renderMermaidToImage } from '../services/mermaid';
+import { renderMermaidToImage, renderTableToImage } from '../services/mermaid';
 
 export interface FormattedResponse {
   content: string;
@@ -14,93 +14,93 @@ export interface FormattedResponse {
 
 // Unicode math symbol mappings for common LaTeX
 const MATH_SYMBOLS: Record<string, string> = {
-  '\\alpha': '\u03b1',
-  '\\beta': '\u03b2',
-  '\\gamma': '\u03b3',
-  '\\delta': '\u03b4',
-  '\\epsilon': '\u03b5',
-  '\\zeta': '\u03b6',
-  '\\eta': '\u03b7',
-  '\\theta': '\u03b8',
-  '\\iota': '\u03b9',
-  '\\kappa': '\u03ba',
-  '\\lambda': '\u03bb',
-  '\\mu': '\u03bc',
-  '\\nu': '\u03bd',
-  '\\xi': '\u03be',
-  '\\pi': '\u03c0',
-  '\\rho': '\u03c1',
-  '\\sigma': '\u03c3',
-  '\\tau': '\u03c4',
-  '\\upsilon': '\u03c5',
-  '\\phi': '\u03c6',
-  '\\chi': '\u03c7',
-  '\\psi': '\u03c8',
-  '\\omega': '\u03c9',
-  '\\Gamma': '\u0393',
-  '\\Delta': '\u0394',
-  '\\Theta': '\u0398',
-  '\\Lambda': '\u039b',
-  '\\Xi': '\u039e',
-  '\\Pi': '\u03a0',
-  '\\Sigma': '\u03a3',
-  '\\Phi': '\u03a6',
-  '\\Psi': '\u03a8',
-  '\\Omega': '\u03a9',
-  '\\infty': '\u221e',
-  '\\pm': '\u00b1',
-  '\\times': '\u00d7',
-  '\\div': '\u00f7',
-  '\\neq': '\u2260',
-  '\\leq': '\u2264',
-  '\\geq': '\u2265',
-  '\\approx': '\u2248',
-  '\\equiv': '\u2261',
-  '\\sum': '\u2211',
-  '\\prod': '\u220f',
-  '\\int': '\u222b',
-  '\\partial': '\u2202',
-  '\\nabla': '\u2207',
-  '\\sqrt': '\u221a',
-  '\\forall': '\u2200',
-  '\\exists': '\u2203',
-  '\\in': '\u2208',
-  '\\notin': '\u2209',
-  '\\subset': '\u2282',
-  '\\supset': '\u2283',
-  '\\cup': '\u222a',
-  '\\cap': '\u2229',
-  '\\emptyset': '\u2205',
-  '\\rightarrow': '\u2192',
-  '\\leftarrow': '\u2190',
-  '\\Rightarrow': '\u21d2',
-  '\\Leftarrow': '\u21d0',
-  '\\leftrightarrow': '\u2194',
-  '\\Leftrightarrow': '\u21d4',
-  '\\cdot': '\u00b7',
-  '\\ldots': '\u2026',
-  '\\cdots': '\u22ef',
-  '\\vdots': '\u22ee',
-  '\\ddots': '\u22f1',
+  '\\alpha': 'α',
+  '\\beta': 'β',
+  '\\gamma': 'γ',
+  '\\delta': 'δ',
+  '\\epsilon': 'ε',
+  '\\zeta': 'ζ',
+  '\\eta': 'η',
+  '\\theta': 'θ',
+  '\\iota': 'ι',
+  '\\kappa': 'κ',
+  '\\lambda': 'λ',
+  '\\mu': 'μ',
+  '\\nu': 'ν',
+  '\\xi': 'ξ',
+  '\\pi': 'π',
+  '\\rho': 'ρ',
+  '\\sigma': 'σ',
+  '\\tau': 'τ',
+  '\\upsilon': 'υ',
+  '\\phi': 'φ',
+  '\\chi': 'χ',
+  '\\psi': 'ψ',
+  '\\omega': 'ω',
+  '\\Gamma': 'Γ',
+  '\\Delta': 'Δ',
+  '\\Theta': 'Θ',
+  '\\Lambda': 'Λ',
+  '\\Xi': 'Ξ',
+  '\\Pi': 'Π',
+  '\\Sigma': 'Σ',
+  '\\Phi': 'Φ',
+  '\\Psi': 'Ψ',
+  '\\Omega': 'Ω',
+  '\\infty': '∞',
+  '\\pm': '±',
+  '\\times': '×',
+  '\\div': '÷',
+  '\\neq': '≠',
+  '\\leq': '≤',
+  '\\geq': '≥',
+  '\\approx': '≈',
+  '\\equiv': '≡',
+  '\\sum': '∑',
+  '\\prod': '∏',
+  '\\int': '∫',
+  '\\partial': '∂',
+  '\\nabla': '∇',
+  '\\sqrt': '√',
+  '\\forall': '∀',
+  '\\exists': '∃',
+  '\\in': '∈',
+  '\\notin': '∉',
+  '\\subset': '⊂',
+  '\\supset': '⊃',
+  '\\cup': '∪',
+  '\\cap': '∩',
+  '\\emptyset': '∅',
+  '\\rightarrow': '→',
+  '\\leftarrow': '←',
+  '\\Rightarrow': '⇒',
+  '\\Leftarrow': '⇐',
+  '\\leftrightarrow': '↔',
+  '\\Leftrightarrow': '⇔',
+  '\\cdot': '·',
+  '\\ldots': '…',
+  '\\cdots': '⋯',
+  '\\vdots': '⋮',
+  '\\ddots': '⋱',
 };
 
 // Superscript and subscript mappings
 const SUPERSCRIPTS: Record<string, string> = {
-  '0': '\u2070', '1': '\u00b9', '2': '\u00b2', '3': '\u00b3',
-  '4': '\u2074', '5': '\u2075', '6': '\u2076', '7': '\u2077',
-  '8': '\u2078', '9': '\u2079', '+': '\u207a', '-': '\u207b',
-  '=': '\u207c', '(': '\u207d', ')': '\u207e', 'n': '\u207f',
-  'i': '\u2071',
+  '0': '⁰', '1': '¹', '2': '²', '3': '³',
+  '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷',
+  '8': '⁸', '9': '⁹', '+': '⁺', '-': '⁻',
+  '=': '⁼', '(': '⁽', ')': '⁾', 'n': 'ⁿ',
+  'i': 'ⁱ',
 };
 
 const SUBSCRIPTS: Record<string, string> = {
-  '0': '\u2080', '1': '\u2081', '2': '\u2082', '3': '\u2083',
-  '4': '\u2084', '5': '\u2085', '6': '\u2086', '7': '\u2087',
-  '8': '\u2088', '9': '\u2089', '+': '\u208a', '-': '\u208b',
-  '=': '\u208c', '(': '\u208d', ')': '\u208e',
-  'a': '\u2090', 'e': '\u2091', 'o': '\u2092', 'x': '\u2093',
-  'h': '\u2095', 'k': '\u2096', 'l': '\u2097', 'm': '\u2098',
-  'n': '\u2099', 'p': '\u209a', 's': '\u209b', 't': '\u209c',
+  '0': '₀', '1': '₁', '2': '₂', '3': '₃',
+  '4': '₄', '5': '₅', '6': '₆', '7': '₇',
+  '8': '₈', '9': '₉', '+': '₊', '-': '₋',
+  '=': '₌', '(': '₍', ')': '₎',
+  'a': 'ₐ', 'e': 'ₑ', 'o': 'ₒ', 'x': 'ₓ',
+  'h': 'ₕ', 'k': 'ₖ', 'l': 'ₗ', 'm': 'ₘ',
+  'n': 'ₙ', 'p': 'ₚ', 's': 'ₛ', 't': 'ₜ',
 };
 
 /**
@@ -130,10 +130,41 @@ export async function formatResponse(content: string): Promise<FormattedResponse
           data: imageBuffer,
         });
         formatted = formatted.replace(`[MERMAID_PLACEHOLDER_${i}]`, `\n*See attached diagram ${i + 1}*\n`);
+      } else {
+        // renderMermaidToImage failed internally without throwing (its own
+        // try/catch swallows the error and returns null) — without this,
+        // the literal "[MERMAID_PLACEHOLDER_N]" text was left in the reply.
+        formatted = formatted.replace(`[MERMAID_PLACEHOLDER_${i}]`, '\n*[Diagram could not be rendered]*\n');
       }
     } catch (error) {
       logger.error('Failed to render mermaid diagram:', error);
       formatted = formatted.replace(`[MERMAID_PLACEHOLDER_${i}]`, '\n*[Diagram could not be rendered]*\n');
+    }
+  }
+
+  // Extract and render markdown tables — Discord doesn't render table
+  // syntax at all, it just shows the literal pipe characters, so anything
+  // that looks like a real markdown table gets turned into an image instead.
+  const { text: textWithoutTables, tables } = extractMarkdownTables(formatted);
+  formatted = textWithoutTables;
+
+  for (let i = 0; i < tables.length; i++) {
+    try {
+      const imageBuffer = await renderTableToImage(tables[i]);
+      if (imageBuffer) {
+        attachments.push({
+          name: `table_${i + 1}.png`,
+          data: imageBuffer,
+        });
+        formatted = formatted.replace(`[TABLE_PLACEHOLDER_${i}]`, `\n*See attached table ${i + 1}*\n`);
+      } else {
+        // Couldn't parse/render it — fall back to the raw markdown rather
+        // than silently dropping the content.
+        formatted = formatted.replace(`[TABLE_PLACEHOLDER_${i}]`, tables[i]);
+      }
+    } catch (error) {
+      logger.error('Failed to render table:', error);
+      formatted = formatted.replace(`[TABLE_PLACEHOLDER_${i}]`, tables[i]);
     }
   }
 
@@ -251,6 +282,42 @@ function extractMermaidDiagrams(content: string): { text: string; diagrams: stri
   }
 
   return { text, diagrams };
+}
+
+/**
+ * Extract markdown tables (header row, a `---|---` separator row, then one
+ * or more data rows) and replace each with a placeholder. Line-scanned
+ * rather than a single regex since tables don't have explicit start/end
+ * fences the way ```mermaid blocks do.
+ */
+function extractMarkdownTables(content: string): { text: string; tables: string[] } {
+  const isTableRow = (line: string): boolean => /^\s*\|.*\|\s*$/.test(line);
+  const isSeparatorRow = (line: string): boolean =>
+    /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes('-');
+
+  const lines = content.split('\n');
+  const outputLines: string[] = [];
+  const tables: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    if (isTableRow(lines[i]) && i + 1 < lines.length && isSeparatorRow(lines[i + 1])) {
+      const tableLines = [lines[i], lines[i + 1]];
+      let j = i + 2;
+      while (j < lines.length && isTableRow(lines[j])) {
+        tableLines.push(lines[j]);
+        j++;
+      }
+      tables.push(tableLines.join('\n'));
+      outputLines.push(`[TABLE_PLACEHOLDER_${tables.length - 1}]`);
+      i = j;
+    } else {
+      outputLines.push(lines[i]);
+      i++;
+    }
+  }
+
+  return { text: outputLines.join('\n'), tables };
 }
 
 // Language to file extension mapping
