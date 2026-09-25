@@ -6,9 +6,11 @@ import {
 import { Command } from './index';
 import {
   getUserMemoryFacts,
+  recordMemoryFact,
   forgetUserMemorySlot,
   clearUserMemory,
   MAX_MEMORY_SLOTS,
+  MAX_FACT_LENGTH,
 } from '../../services/memory';
 
 export const memoryCommand: Command = {
@@ -16,6 +18,17 @@ export const memoryCommand: Command = {
     .setName('memory')
     .setDescription('See or manage what Nocturnal remembers about you')
     .addSubcommand((sub) => sub.setName('view').setDescription('List what Nocturnal remembers about you'))
+    .addSubcommand((sub) =>
+      sub
+        .setName('add')
+        .setDescription("Manually tell me something to remember, instead of waiting for me to pick it up")
+        .addStringOption((opt) =>
+          opt
+            .setName('fact')
+            .setDescription(`Short fact, e.g. "I have a dog named Rex" (max ${MAX_FACT_LENGTH} chars)`)
+            .setRequired(true)
+        )
+    )
     .addSubcommand((sub) =>
       sub
         .setName('forget')
@@ -41,10 +54,31 @@ export const memoryCommand: Command = {
         .setTitle('What Nocturnal Remembers About You')
         .setColor(0x2f3136)
         .setDescription(
-          facts.length ? facts.map((f) => `**${f.slot}.** ${f.fact}`).join('\n') : 'Nothing yet — this fills in naturally as we talk.'
+          facts.length ? facts.map((f) => `**${f.slot}.** ${f.fact}`).join('\n') : 'Nothing yet — this fills in naturally as we talk, or add one with /memory add.'
         )
-        .setFooter({ text: 'This is global, not tied to any one server. Use /memory forget <slot> to remove one.' });
+        .setFooter({ text: 'This is global, not tied to any one server. /memory add to teach me something, /memory forget <slot> to remove one.' });
       await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+
+    if (subcommand === 'add') {
+      const fact = interaction.options.getString('fact', true).trim();
+      if (!fact) {
+        await interaction.reply({ content: "Can't add an empty fact.", ephemeral: true });
+        return;
+      }
+      if (fact.length > MAX_FACT_LENGTH) {
+        await interaction.reply({
+          content: `That's ${fact.length} characters — keep it under ${MAX_FACT_LENGTH}.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      // Same capped-at-10, moves-to-slot-1 store the passive extractor
+      // writes to — a manually added fact behaves exactly like one it
+      // picked up on its own, just without waiting to see it in context.
+      recordMemoryFact(userId, fact);
+      await interaction.reply({ content: `Got it, I'll remember: "${fact}"`, ephemeral: true });
       return;
     }
 
