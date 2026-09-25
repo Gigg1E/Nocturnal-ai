@@ -11,6 +11,13 @@ import {
   resetUserPersonality,
   MAX_PERSONALITY_LENGTH,
 } from '../../services/personality';
+import {
+  parsePreferencesInput,
+  getUserPreferences,
+  setUserPreferences,
+  resetUserPreferences,
+  MAX_PREFERENCES_LENGTH,
+} from '../../services/preferences';
 
 export const personalityCommand: Command = {
   data: new SlashCommandBuilder()
@@ -29,11 +36,36 @@ export const personalityCommand: Command = {
             .setMaxLength(MAX_PERSONALITY_LENGTH)
         )
     )
-    .addSubcommand((sub) => sub.setName('reset').setDescription('Go back to the default personality')),
+    .addSubcommand((sub) => sub.setName('reset').setDescription('Go back to the default personality'))
+    .addSubcommandGroup((group) =>
+      group
+        .setName('preferences')
+        .setDescription("Nocturnal's own opinions/likes — secondary flavor, not how it talks")
+        .addSubcommand((sub) =>
+          sub
+            .setName('set')
+            .setDescription('Set a comma-separated list of "topic: value" pairs')
+            .addStringOption((opt) =>
+              opt
+                .setName('list')
+                .setDescription('e.g. "favorite anime: X, favorite food: ramen, hates: mornings"')
+                .setRequired(true)
+                .setMaxLength(MAX_PREFERENCES_LENGTH)
+            )
+        )
+        .addSubcommand((sub) => sub.setName('view').setDescription("See Nocturnal's current preferences"))
+        .addSubcommand((sub) => sub.setName('reset').setDescription('Clear all preferences'))
+    ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const subcommand = interaction.options.getSubcommand();
+    const group = interaction.options.getSubcommandGroup(false);
     const userId = interaction.user.id;
+
+    if (group === 'preferences') {
+      await handlePreferences(interaction, subcommand, userId);
+      return;
+    }
 
     if (subcommand === 'view') {
       const custom = getUserPersonality(userId);
@@ -75,3 +107,49 @@ export const personalityCommand: Command = {
     }
   },
 };
+
+async function handlePreferences(
+  interaction: ChatInputCommandInteraction,
+  subcommand: string,
+  userId: string
+): Promise<void> {
+  if (subcommand === 'view') {
+    const items = getUserPreferences(userId);
+    const embed = new EmbedBuilder()
+      .setTitle("Nocturnal's Preferences")
+      .setColor(0x2f3136)
+      .setDescription(
+        items && items.length > 0
+          ? items.map((i) => `**${i.topic}:** ${i.value}`).join('\n')
+          : 'None set — use /personality preferences set to give it some.'
+      )
+      .setFooter({
+        text: 'Secondary flavor, referenced when relevant — not repeated every message.',
+      });
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    return;
+  }
+
+  if (subcommand === 'set') {
+    const list = interaction.options.getString('list', true).trim();
+    const result = parsePreferencesInput(list);
+    if (!result.ok) {
+      await interaction.reply({
+        content: `Couldn't parse that: ${result.error}\nFormat: \`topic: value, topic: value, ...\` — e.g. \`favorite anime: X, favorite food: ramen\`. Avoid extra commas inside a single value.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    setUserPreferences(userId, result.items);
+    await interaction.reply({
+      content: `Set ${result.items.length} preference${result.items.length === 1 ? '' : 's'}. Use /personality preferences view to see them.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (subcommand === 'reset') {
+    resetUserPreferences(userId);
+    await interaction.reply({ content: 'Cleared all preferences.', ephemeral: true });
+  }
+}

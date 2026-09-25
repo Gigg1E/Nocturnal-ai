@@ -39,6 +39,7 @@ export const helpCommand: Command = {
           name: 'Make Me Yours',
           value: [
             '`/personality` — customize how I talk to you (follows you everywhere)',
+            '`/personality preferences` — my own likes/opinions, referenced when relevant',
             '`/memory` — see, add, or clear what I remember about you long-term',
             '`/clearchat` — forget the current conversation only (not /memory)',
           ].join('\n'),
