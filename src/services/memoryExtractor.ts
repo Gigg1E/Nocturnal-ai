@@ -2,12 +2,20 @@ import { logger } from '../utils/logger';
 import { getUserMemoryFacts, recordMemoryFact, MAX_FACT_LENGTH } from './memory';
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
-const EXTRACTOR_MODEL = 'qwen2.5:1.5b'; // must match src/ollama/extractor.ts
+// Was qwen2.5:1.5b (the same tiny local model used for tool-routing entity
+// extraction in ../ollama/extractor.ts) -- confirmed unreliable for this
+// specific job via direct side-by-side testing: it fabricated a pet's name
+// that was never mentioned, and invented "studying computer science" out of
+// a conversation about shoes. deepseek-v4-flash:cloud got every test case
+// right (including correctly saying NONE for irrelevant chatter) with no
+// hallucinated details. Deliberately NOT tied to extractor.ts's model --
+// they're unrelated jobs and don't need to match.
+const EXTRACTOR_MODEL = 'deepseek-v4-flash:cloud';
 
 // Cheap pre-filter so this doesn't fire a model call on every message — only
 // ones that plausibly contain something personal/durable. False negatives
 // are fine (nothing breaks if a fact gets missed); false positives just cost
-// one small, fast, local model call.
+// one extra background model call.
 const SELF_REFERENTIAL = /\b(i'?m|i am|i've|i have|my \w|working on|studying|homework|class|project|pet|dog|cat|favorite|favourite|birthday|i live|i'?m from)\b/i;
 
 const PROMPT_HEADER = `You quietly track short, durable facts about a Discord user across conversations - the kind of thing a friend would remember (their name, a pet, a project, what they're studying, a hobby, where they live). Not one-off details, not whatever today's conversation topic happens to be.
@@ -39,7 +47,10 @@ export async function maybeExtractMemory(userId: string, message: string): Promi
         model: EXTRACTOR_MODEL,
         prompt,
         stream: false,
-        options: { temperature: 0.1, num_predict: 60 },
+        // 150 not 60 -- some cloud models spend part of their budget on hidden
+        // reasoning before the actual one-line answer; too tight a budget can
+        // mean the response comes back empty.
+        options: { temperature: 0.1, num_predict: 150 },
       }),
     });
     if (!response.ok) return;
