@@ -1,7 +1,6 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  PermissionFlagsBits,
 } from 'discord.js';
 import { Command } from './index';
 import { getConfig, updateConfig } from '../../config';
@@ -13,7 +12,7 @@ const OWNER_ID = process.env.OWNER_ID;
 export const modelCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('model')
-    .setDescription('Manage Ollama models (Owner only)')
+    .setDescription('Manage the Ollama model (Owner only)')
     // 0 = nobody by default, not even guild Administrators — this only
     // affects Ollama model selection on the owner's own hardware (see
     // OWNER_ID check below), so unlike /config etc. it shouldn't be
@@ -23,23 +22,12 @@ export const modelCommand: Command = {
     .setDefaultMemberPermissions(0)
     .addSubcommand((subcommand) =>
       subcommand
-        .setName('chat')
-        .setDescription('Set the chat model')
+        .setName('set')
+        .setDescription('Set the model (used for both chat and vision — one model, not two)')
         .addStringOption((option) =>
           option
             .setName('model')
-            .setDescription('Model name (e.g., qwen3:14b)')
-            .setRequired(true)
-        )
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('vision')
-        .setDescription('Set the vision model')
-        .addStringOption((option) =>
-          option
-            .setName('model')
-            .setDescription('Model name (e.g., qwen3-vl:8b)')
+            .setDescription('Model name (e.g., qwen3.5:cloud)')
             .setRequired(true)
         )
     )
@@ -51,7 +39,7 @@ export const modelCommand: Command = {
     .addSubcommand((subcommand) =>
       subcommand
         .setName('current')
-        .setDescription('Show currently configured models')
+        .setDescription('Show the currently configured model')
     ),
   adminOnly: true,
 
@@ -68,23 +56,20 @@ export const modelCommand: Command = {
     const subcommand = interaction.options.getSubcommand();
 
     switch (subcommand) {
-      case 'chat':
-        await handleSetChatModel(interaction);
-        break;
-      case 'vision':
-        await handleSetVisionModel(interaction);
+      case 'set':
+        await handleSetModel(interaction);
         break;
       case 'list':
         await handleListModels(interaction);
         break;
       case 'current':
-        await handleCurrentModels(interaction);
+        await handleCurrentModel(interaction);
         break;
     }
   },
 };
 
-async function handleSetChatModel(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSetModel(interaction: ChatInputCommandInteraction): Promise<void> {
   const modelName = interaction.options.getString('model', true);
   const config = getConfig();
   const oldModel = config.ollama.chatModel;
@@ -103,31 +88,7 @@ async function handleSetChatModel(interaction: ChatInputCommandInteraction): Pro
   logConfigChange('ollama.chatModel', oldModel, modelName, interaction.user.id);
 
   await interaction.reply({
-    content: `Chat model updated: \`${oldModel}\` → \`${modelName}\``,
-    ephemeral: true,
-  });
-}
-
-async function handleSetVisionModel(interaction: ChatInputCommandInteraction): Promise<void> {
-  const modelName = interaction.options.getString('model', true);
-  const config = getConfig();
-  const oldModel = config.ollama.visionModel;
-
-  // Verify model exists
-  const availableModels = await listModels();
-  if (availableModels.length > 0 && !availableModels.includes(modelName)) {
-    await interaction.reply({
-      content: `Model \`${modelName}\` not found. Available models:\n${availableModels.map(m => `• ${m}`).join('\n')}`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  updateConfig('ollama', 'visionModel', modelName);
-  logConfigChange('ollama.visionModel', oldModel, modelName, interaction.user.id);
-
-  await interaction.reply({
-    content: `Vision model updated: \`${oldModel}\` → \`${modelName}\``,
+    content: `Model updated: \`${oldModel}\` → \`${modelName}\`\nUsed for both chat and vision — if this model doesn't support vision, images just won't work until you set one that does.`,
     ephemeral: true,
   });
 }
@@ -151,11 +112,11 @@ async function handleListModels(interaction: ChatInputCommandInteraction): Promi
   });
 }
 
-async function handleCurrentModels(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleCurrentModel(interaction: ChatInputCommandInteraction): Promise<void> {
   const config = getConfig();
 
   await interaction.reply({
-    content: `**Current Model Configuration:**\n• Chat Model: \`${config.ollama.chatModel}\`\n• Vision Model: \`${config.ollama.visionModel}\`\n• Max Tokens: \`${config.ollama.maxTokens}\`\n• Temperature: \`${config.ollama.temperature}\``,
+    content: `**Current Model Configuration:**\n• Model: \`${config.ollama.chatModel}\` (chat + vision)\n• Max Tokens: \`${config.ollama.maxTokens}\`\n• Temperature: \`${config.ollama.temperature}\``,
     ephemeral: true,
   });
 }

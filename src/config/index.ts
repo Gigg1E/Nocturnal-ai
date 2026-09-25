@@ -11,9 +11,14 @@ export interface BotConfig {
   cooldownSeconds: number;
 }
 
+// One model for both chat and vision -- if it doesn't have vision
+// capability, images just don't work; there's no separate fallback model.
+// Was chatModel + visionModel as two independently-configurable fields,
+// which meant an image message ran through a completely different call
+// (no tool access, no shared context) from a text message, and the two
+// could silently drift out of sync (see commit history around 2026-09).
 export interface OllamaConfig {
   chatModel: string;
-  visionModel: string;
   maxTokens: number;
   temperature: number;
   topP: number;

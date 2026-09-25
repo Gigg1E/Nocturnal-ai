@@ -99,47 +99,6 @@ export async function generateChat(options: OllamaGenerateOptions): Promise<Olla
   }
 }
 
-export async function generateVision(
-  prompt: string,
-  imageBase64: string,
-  context?: OllamaMessage[]
-): Promise<OllamaResponse> {
-  const config = getConfig();
-
-  const messages: OllamaMessage[] = context || [];
-  messages.push({
-    role: 'user',
-    content: prompt,
-    images: [imageBase64],
-  });
-
-  try {
-    const response = await fetch(`${OLLAMA_HOST}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: config.ollama.visionModel,
-        messages,
-        stream: false,
-        options: {
-          num_predict: config.ollama.maxTokens,
-          temperature: config.ollama.temperature,
-          top_p: config.ollama.topP,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ollama Vision API error: ${response.status} ${response.statusText}`);
-    }
-
-    return await response.json() as OllamaResponse;
-  } catch (error) {
-    logger.error('Ollama vision error:', error);
-    throw error;
-  }
-}
-
 export async function listModels(): Promise<string[]> {
   try {
     const response = await fetch(`${OLLAMA_HOST}/api/tags`);
@@ -172,13 +131,3 @@ export async function imageUrlToBase64(url: string): Promise<string> {
   }
 }
 
-export function shouldUseVisionModel(hasImage: boolean, messageContent: string): boolean {
-  if (!hasImage) return false;
-  const visionKeywords = [
-    'what', 'describe', 'explain', 'analyze', 'look', 'see', 'show',
-    'image', 'picture', 'photo', 'screenshot', 'this', 'that',
-    'read', 'text', 'ocr', 'identify', 'recognize',
-  ];
-  const lower = messageContent.toLowerCase();
-  return visionKeywords.some((kw) => lower.includes(kw));
-}

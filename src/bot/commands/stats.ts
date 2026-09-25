@@ -60,7 +60,6 @@ export const statsCommand: Command = {
           name: 'Config',
           value: [
             `Model: ${config.ollama.chatModel}`,
-            `Vision: ${config.ollama.visionModel}`,
             `Tools: ${guildConfig.tools.enabled ? 'On' : 'Off'}`,
           ].join('\n'),
           inline: true,

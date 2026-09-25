@@ -9,7 +9,6 @@
   },
   "ollama": {
     "chatModel": "qwen3.5:cloud",
-    "visionModel": "qwen3-vl:8b",
     "maxTokens": 4096,
     "temperature": 0.7,
     "topP": 0.9

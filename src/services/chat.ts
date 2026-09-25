@@ -5,13 +5,7 @@ import { getEffectiveSystemPrompt } from './personality';
 import { maybeExtractMemory } from './memoryExtractor';
 import { logger, logBotUsage } from '../utils/logger';
 import { checkRateLimit, updateRateLimit, trackUsage } from '../database/queries';
-import {
-  generateChat,
-  generateVision,
-  imageUrlToBase64,
-  OllamaMessage,
-  shouldUseVisionModel,
-} from '../ollama/client';
+import { generateChat, imageUrlToBase64, OllamaMessage } from '../ollama/client';
 import { TOOL_SCHEMAS, dispatchTool } from '../ollama/tools';
 import { formatResponse, buildOutgoingMessages, detectLongFormRequest, getLongFormRejection, OutgoingMessage } from '../ollama/formatter';
 
@@ -83,6 +77,34 @@ function clearHistory(userId: string, discordMessage: DiscordMessage): void {
 }
 
 export { clearHistory };
+
+/**
+ * Builds the user-turn message, attaching an image (base64) when the
+ * Discord message has one. Same model, same call, same conversation either
+ * way — there's no separate vision model/pathway anymore. If the
+ * configured chat model doesn't support vision, Ollama just won't do
+ * anything useful with the images field; that's an acceptable failure mode
+ * (no separate fallback model to maintain or drift out of sync).
+ */
+async function buildUserMessage(discordMessage: DiscordMessage, mentionContent: string): Promise<{ message: OllamaMessage; hasImage: boolean }> {
+  const imageAttachments = discordMessage.attachments.filter(
+    (att) => att.contentType?.startsWith('image/') ?? false
+  );
+  const hasImage = imageAttachments.size > 0;
+
+  const message: OllamaMessage = {
+    role: 'user',
+    content: mentionContent || (hasImage ? 'What do you see in this image?' : ''),
+  };
+
+  if (hasImage) {
+    const firstImage = imageAttachments.first()!;
+    const imageBase64 = await imageUrlToBase64(firstImage.url);
+    message.images = [imageBase64];
+  }
+
+  return { message, hasImage };
+}
 
 // ==================== RESPONSE TYPES ====================
 
@@ -202,12 +224,6 @@ export async function processMessage(
 
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
   try {
-    const imageAttachments = discordMessage.attachments.filter(
-      (att) => att.contentType?.startsWith('image/') ?? false
-    );
-    const hasImage = imageAttachments.size > 0;
-    const useVision = hasImage && shouldUseVisionModel(true, mentionContent);
-
     const context: OllamaMessage[] = [
       { role: 'system', content: getEffectiveSystemPrompt(userId) },
     ];
@@ -216,32 +232,16 @@ export async function processMessage(
       context.push({ role: entry.role, content: entry.content });
     }
 
-    let aiContent: string;
+    const { message: userMessage, hasImage } = await buildUserMessage(discordMessage, mentionContent);
+    context.push(userMessage);
 
-    if (useVision && imageAttachments.size > 0) {
-      const firstImage = imageAttachments.first()!;
-      const imageBase64 = await imageUrlToBase64(firstImage.url);
-      context.push({
-        role: 'user',
-        content: mentionContent || 'What do you see in this image?',
-        images: [imageBase64],
-      });
-      const response = await generateVision(
-        mentionContent || 'What do you see in this image?',
-        imageBase64,
-        context.slice(0, -1),
-      );
-      aiContent = response.message.content;
-    } else {
-      context.push({ role: 'user', content: mentionContent });
-      aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
-    }
+    const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
 
     const formatted = await formatResponse(aiContent);
     addToHistory(userId, discordMessage, mentionContent, aiContent);
     updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'message');
-    logBotUsage(userId, 'message', { hasImage, useVision });
+    logBotUsage(userId, 'message', { hasImage });
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
     const parts = buildOutgoingMessages(formatted.segments);
@@ -328,38 +328,16 @@ export async function processReply(
       });
     }
 
-    const imageAttachments = discordMessage.attachments.filter(
-      (att) => att.contentType?.startsWith('image/') ?? false
-    );
-    const hasImage = imageAttachments.size > 0;
-    const useVision = hasImage && shouldUseVisionModel(true, mentionContent);
+    const { message: userMessage, hasImage } = await buildUserMessage(discordMessage, mentionContent);
+    context.push(userMessage);
 
-    let aiContent: string;
-
-    if (useVision && imageAttachments.size > 0) {
-      const firstImage = imageAttachments.first()!;
-      const imageBase64 = await imageUrlToBase64(firstImage.url);
-      context.push({
-        role: 'user',
-        content: mentionContent || 'What do you see in this image?',
-        images: [imageBase64],
-      });
-      const response = await generateVision(
-        mentionContent || 'What do you see in this image?',
-        imageBase64,
-        context.slice(0, -1),
-      );
-      aiContent = response.message.content;
-    } else {
-      context.push({ role: 'user', content: mentionContent });
-      aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
-    }
+    const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
 
     const formatted = await formatResponse(aiContent);
     addToHistory(userId, discordMessage, mentionContent, aiContent);
     updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'reply');
-    logBotUsage(userId, 'reply', { hasImage, useVision });
+    logBotUsage(userId, 'reply', { hasImage });
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
     const parts = buildOutgoingMessages(formatted.segments);
