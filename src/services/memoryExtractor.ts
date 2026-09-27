@@ -7,10 +7,14 @@ const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
 // specific job via direct side-by-side testing: it fabricated a pet's name
 // that was never mentioned, and invented "studying computer science" out of
 // a conversation about shoes. deepseek-v4-flash:cloud got every test case
-// right (including correctly saying NONE for irrelevant chatter) with no
-// hallucinated details. Deliberately NOT tied to extractor.ts's model --
-// they're unrelated jobs and don't need to match.
-const EXTRACTOR_MODEL = 'deepseek-v4-flash:cloud';
+// right at the time, but its backing cloud model was retired 2026-09-25,
+// which silently broke this feature in production -- the retirement
+// response is a 200 with an {error} body, not a failed request, so the
+// `if (!response.ok) return` check below never caught it. gemma4:cloud
+// re-verified correct on the same test cases (NONE for irrelevant chatter,
+// no hallucinated details) and is currently live. Deliberately NOT tied to
+// extractor.ts's model -- they're unrelated jobs and don't need to match.
+const EXTRACTOR_MODEL = 'gemma4:cloud';
 
 // Cheap pre-filter so this doesn't fire a model call on every message — only
 // ones that plausibly contain something personal/durable. False negatives

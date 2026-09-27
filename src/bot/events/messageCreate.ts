@@ -1,7 +1,8 @@
 import { Message, AttachmentBuilder, EmbedBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { logger, logRateLimit } from '../../utils/logger';
-import { isUserBlacklisted, isChannelAllowed } from '../../config/guildConfig';
+import { isUserBlacklisted, isChannelAllowed, isCasualChatChannel } from '../../config/guildConfig';
 import { processMessage, processReply } from '../../services/chat';
+import { recordAmbientMessage, scheduleEngagementCheck, evaluateNow } from '../../services/casualChat';
 import { formatToolArgs } from '../../ollama/tools';
 
 type SendableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
@@ -42,12 +43,56 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   const repliedToMessage = await getRepliedToMessage(message);
   const isReplyToBot = repliedToMessage?.author.id === botId;
 
-  if (!isMentioned && !isReplyToBot) return;
-
   // A DM has no guild to scope against — falls back to a dedicated "dm"
   // pseudo-guild config (empty blacklist/channel lists by default, same
   // effective behavior as before this was guild-scoped).
   const guildId = message.guildId ?? 'dm';
+
+  // Answer Machine channels intercept everything -- ambient chatter AND
+  // direct mentions/replies -- before the chat-bot/Kimi pipeline below ever
+  // sees them. A channel opted into this mode never falls through to the
+  // normal mention pipeline: mentioning the bot here still only gets a
+  // response if there's a genuine question or misinformation to act on
+  // (evaluated immediately instead of waiting for a lull), not because it
+  // was addressed. No memory, no per-user history either way.
+  if (message.guildId && isSendableChannel(message.channel) && isCasualChatChannel(guildId, message.channel.id)) {
+    if (isUserBlacklisted(guildId, message.author.id)) return;
+
+    const imageAttachment = message.attachments.find(
+      (att) => att.contentType?.startsWith('image/') ?? false
+    );
+    const bufferedContent =
+      isMentioned || isReplyToBot
+        ? message.content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim()
+        : message.content;
+
+    recordAmbientMessage(message.channel.id, {
+      author: message.author.username,
+      content: bufferedContent,
+      hasImage: !!imageAttachment,
+      ts: Date.now(),
+    });
+
+    const reactFn = async (emoji: string): Promise<void> => {
+      await message.react(emoji);
+    };
+
+    if (isMentioned || isReplyToBot) {
+      await evaluateNow(message.channel.id, guildId, message.channel, imageAttachment?.url ?? null, reactFn);
+    } else {
+      scheduleEngagementCheck(
+        message.channel.id,
+        guildId,
+        message.channel,
+        message.id,
+        imageAttachment?.url ?? null,
+        reactFn
+      );
+    }
+    return;
+  }
+
+  if (!isMentioned && !isReplyToBot) return;
 
   if (isUserBlacklisted(guildId, message.author.id)) {
     logger.info(`Blacklisted user ${message.author.id} tried to interact`);

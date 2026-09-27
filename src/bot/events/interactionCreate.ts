@@ -3,6 +3,7 @@ import {
   ChatInputCommandInteraction,
   ButtonInteraction,
   StringSelectMenuInteraction,
+  ChannelSelectMenuInteraction,
   ModalSubmitInteraction,
   PermissionFlagsBits,
   ModalBuilder,
@@ -10,6 +11,8 @@ import {
   TextInputBuilder,
   TextInputStyle,
   StringSelectMenuBuilder,
+  ChannelSelectMenuBuilder,
+  ChannelType,
 } from 'discord.js';
 import { logger } from '../../utils/logger';
 import { commands } from '../commands';
@@ -21,6 +24,18 @@ import {
   MAX_FACT_LENGTH,
 } from '../../services/memory';
 import { setUserPersonality, resetUserPersonality, MAX_PERSONALITY_LENGTH } from '../../services/personality';
+import {
+  addAllowedChannel,
+  removeAllowedChannel,
+  addBlockedChannel,
+  removeBlockedChannel,
+  addCasualChannel,
+  removeCasualChannel,
+  setCasualChattiness,
+  loadGuildConfig,
+  saveGuildConfig,
+  GuildConfig,
+} from '../../config/guildConfig';
 
 export async function handleInteractionCreate(interaction: Interaction): Promise<void> {
   try {
@@ -30,6 +45,8 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
       await handleButton(interaction);
     } else if (interaction.isStringSelectMenu()) {
       await handleSelectMenu(interaction);
+    } else if (interaction.isChannelSelectMenu()) {
+      await handleChannelSelectMenu(interaction);
     } else if (interaction.isModalSubmit()) {
       await handleModalSubmit(interaction);
     }
@@ -110,12 +127,28 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
     case 'personality_action':
       await handlePersonalityActionSelect(interaction);
       break;
+    case 'channel_action':
+      await handleChannelActionSelect(interaction);
+      break;
+    case 'channel_chattiness':
+      await handleChannelChattinessSelect(interaction);
+      break;
     default:
       await interaction.reply({
         content: 'Action not available.',
         ephemeral: true,
       });
   }
+}
+
+async function handleChannelSelectMenu(interaction: ChannelSelectMenuInteraction): Promise<void> {
+  const [action, op] = interaction.customId.split(':');
+  logger.info(`ChannelSelect: ${action}:${op} by ${interaction.user.tag} -> ${interaction.values[0]}`);
+  if (action !== 'channel_pick') {
+    await interaction.reply({ content: 'Action not available.', ephemeral: true });
+    return;
+  }
+  await handleChannelPick(interaction, op);
 }
 
 async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
@@ -244,6 +277,99 @@ async function handlePersonalitySetModal(interaction: ModalSubmitInteraction): P
     content: 'Personality updated. This follows you across every server Nocturnal is in.',
     ephemeral: true,
   });
+}
+
+// ==================== /channel component handlers ====================
+
+const CHANNEL_PICK_LABELS: Record<string, string> = {
+  allow: 'Pick a channel to allow (mentions/replies)',
+  disallow: 'Pick a channel to remove from the allowed list',
+  block: 'Pick a channel to block',
+  unblock: 'Pick a channel to unblock',
+  casual_enable: 'Pick a channel to enable the Answer Machine in',
+  casual_disable: 'Pick a channel to disable the Answer Machine in',
+};
+
+async function handleChannelActionSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const choice = interaction.values[0];
+  const guildId = interaction.guildId!;
+
+  if (choice === 'reset') {
+    const config = loadGuildConfig(guildId);
+    config.channels.allowed = [];
+    config.channels.blocked = [];
+    config.casualChat.channels = [];
+    saveGuildConfig(guildId, config);
+    await interaction.update({ content: 'All channel restrictions and Answer Machine channels have been reset.', embeds: [], components: [] });
+    return;
+  }
+
+  if (choice === 'chattiness') {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('channel_chattiness')
+      .setPlaceholder('How often should it chime in?')
+      .addOptions(
+        { label: 'Low', value: 'low', description: 'Chimes in rarely (~every 10 min at most)' },
+        { label: 'Medium', value: 'medium', description: 'Chimes in occasionally (~every 5 min at most)' },
+        { label: 'High', value: 'high', description: 'Chimes in more often (~every 2 min at most)' }
+      );
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+    await interaction.update({ content: 'How chatty should the Answer Machine be?', embeds: [], components: [row] });
+    return;
+  }
+
+  const label = CHANNEL_PICK_LABELS[choice];
+  if (!label) {
+    await interaction.reply({ content: 'Action not available.', ephemeral: true });
+    return;
+  }
+
+  const picker = new ChannelSelectMenuBuilder()
+    .setCustomId(`channel_pick:${choice}`)
+    .setPlaceholder(label)
+    .addChannelTypes(ChannelType.GuildText);
+  const row = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(picker);
+  await interaction.update({ content: label, embeds: [], components: [row] });
+}
+
+async function handleChannelChattinessSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const chattiness = interaction.values[0] as GuildConfig['casualChat']['chattiness'];
+  setCasualChattiness(interaction.guildId!, chattiness);
+  await interaction.update({ content: `Answer Machine chattiness set to **${chattiness}**.`, embeds: [], components: [] });
+}
+
+async function handleChannelPick(interaction: ChannelSelectMenuInteraction, op: string): Promise<void> {
+  const guildId = interaction.guildId!;
+  const channelId = interaction.values[0];
+
+  switch (op) {
+    case 'allow':
+      addAllowedChannel(guildId, channelId);
+      await interaction.update({ content: `<#${channelId}> added to the allowed list.`, embeds: [], components: [] });
+      break;
+    case 'disallow':
+      removeAllowedChannel(guildId, channelId);
+      await interaction.update({ content: `<#${channelId}> removed from the allowed list.`, embeds: [], components: [] });
+      break;
+    case 'block':
+      addBlockedChannel(guildId, channelId);
+      await interaction.update({ content: `<#${channelId}> blocked.`, embeds: [], components: [] });
+      break;
+    case 'unblock':
+      removeBlockedChannel(guildId, channelId);
+      await interaction.update({ content: `<#${channelId}> unblocked.`, embeds: [], components: [] });
+      break;
+    case 'casual_enable':
+      addCasualChannel(guildId, channelId);
+      await interaction.update({ content: `Answer Machine enabled in <#${channelId}>.`, embeds: [], components: [] });
+      break;
+    case 'casual_disable':
+      removeCasualChannel(guildId, channelId);
+      await interaction.update({ content: `Answer Machine disabled in <#${channelId}>.`, embeds: [], components: [] });
+      break;
+    default:
+      await interaction.reply({ content: 'Action not available.', ephemeral: true });
+  }
 }
 
 // ==================== /config modal handler (existing) ====================

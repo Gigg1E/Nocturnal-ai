@@ -33,6 +33,14 @@ export interface GuildConfig {
   users: {
     blacklist: string[];
   };
+  // Ambient "hang out in the channel" mode -- separate from channels.allowed,
+  // which gates the mention/reply pipeline and defaults to "all channels"
+  // when empty. This defaults to no channels: an admin has to explicitly
+  // opt a channel in.
+  casualChat: {
+    channels: string[];
+    chattiness: 'low' | 'medium' | 'high';
+  };
 }
 
 // Factory defaults for a brand-new guild that hasn't customized anything yet.
@@ -60,6 +68,10 @@ export const DEFAULT_GUILD_CONFIG: GuildConfig = {
   },
   users: {
     blacklist: [],
+  },
+  casualChat: {
+    channels: [],
+    chattiness: 'medium',
   },
 };
 
@@ -163,6 +175,35 @@ export function addBlockedChannel(guildId: string, channelId: string): void {
     config.channels.blocked.push(channelId);
     saveGuildConfig(guildId, config);
   }
+}
+
+export function addCasualChannel(guildId: string, channelId: string): void {
+  const config = loadGuildConfig(guildId);
+  if (!config.casualChat.channels.includes(channelId)) {
+    config.casualChat.channels.push(channelId);
+    saveGuildConfig(guildId, config);
+  }
+}
+
+export function removeCasualChannel(guildId: string, channelId: string): void {
+  const config = loadGuildConfig(guildId);
+  const index = config.casualChat.channels.indexOf(channelId);
+  if (index > -1) {
+    config.casualChat.channels.splice(index, 1);
+    saveGuildConfig(guildId, config);
+  }
+}
+
+export function setCasualChattiness(guildId: string, chattiness: GuildConfig['casualChat']['chattiness']): void {
+  const config = loadGuildConfig(guildId);
+  config.casualChat.chattiness = chattiness;
+  saveGuildConfig(guildId, config);
+}
+
+// Blocking a channel always wins, even if it's also in the casual-chat list.
+export function isCasualChatChannel(guildId: string, channelId: string): boolean {
+  const config = loadGuildConfig(guildId);
+  return config.casualChat.channels.includes(channelId) && !config.channels.blocked.includes(channelId);
 }
 
 export function removeBlockedChannel(guildId: string, channelId: string): void {

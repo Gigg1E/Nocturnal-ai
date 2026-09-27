@@ -31,5 +31,11 @@
   },
   "users": {
     "blacklist": []
+  },
+  "casualChat": {
+    "channels": [
+      "1356322883437334538"
+    ],
+    "chattiness": "medium"
   }
 }

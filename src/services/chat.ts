@@ -130,16 +130,17 @@ export interface ChatResponse {
 
 // ==================== AGENTIC LOOP ====================
 
-async function runAgentLoop(
+export async function runAgentLoop(
   messages: OllamaMessage[],
   toolsEnabled: boolean,
   callbacks?: AgentCallbacks,
+  model?: string,
 ): Promise<string> {
   const tools = toolsEnabled ? TOOL_SCHEMAS : [];
   let totalFailures = 0;
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await generateChat({ messages, tools: tools.length > 0 ? tools : undefined });
+    const response = await generateChat({ messages, tools: tools.length > 0 ? tools : undefined, model });
     const msg = response.message;
 
     // No tool calls — this is the final answer
@@ -188,7 +189,7 @@ async function runAgentLoop(
         role: 'user',
         content: 'Some tools failed. Answer with what you have or let the user know.',
       });
-      const fallback = await generateChat({ messages });
+      const fallback = await generateChat({ messages, model });
       return fallback.message.content || '';
     }
   }
@@ -199,7 +200,7 @@ async function runAgentLoop(
     role: 'user',
     content: 'Answer with the best information gathered so far.',
   });
-  const fallback = await generateChat({ messages });
+  const fallback = await generateChat({ messages, model });
   return fallback.message.content || '';
 }
 

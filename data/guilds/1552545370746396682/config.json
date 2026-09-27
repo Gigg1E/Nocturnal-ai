@@ -23,5 +23,11 @@
   },
   "users": {
     "blacklist": []
+  },
+  "casualChat": {
+    "channels": [
+      "1552550314630979595"
+    ],
+    "chattiness": "high"
   }
 }
