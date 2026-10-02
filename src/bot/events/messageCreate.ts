@@ -33,6 +33,35 @@ function randomThinkingPhrase(): string {
   return THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
 }
 
+const MAX_IMAGE_DIM = 1280;
+
+// Pictures in a message for the Answer Machine: image attachments, plus
+// link previews that are themselves an image or GIF (Tenor/GIPHY, pasted
+// image links) -- not article/video thumbnails. Big attachments are fetched
+// through Discord's media proxy at a smaller size.
+export function messageImageUrls(message: Message): string[] {
+  const urls: string[] = [];
+  for (const att of message.attachments.values()) {
+    if (!att.contentType?.startsWith('image/')) continue;
+    let url = att.url;
+    if (att.width && att.height && Math.max(att.width, att.height) > MAX_IMAGE_DIM) {
+      const scale = MAX_IMAGE_DIM / Math.max(att.width, att.height);
+      const u = new URL(att.proxyURL);
+      u.searchParams.set('width', String(Math.round(att.width * scale)));
+      u.searchParams.set('height', String(Math.round(att.height * scale)));
+      url = u.toString();
+    }
+    urls.push(url);
+  }
+  for (const embed of message.embeds) {
+    if (embed.data.type !== 'image' && embed.data.type !== 'gifv') continue;
+    const img = embed.image ?? embed.thumbnail;
+    const url = img?.proxyURL ?? img?.url;
+    if (url) urls.push(url);
+  }
+  return urls;
+}
+
 export async function handleMessageCreate(message: Message): Promise<void> {
   if (message.author.bot) return;
 
@@ -59,9 +88,6 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   if (message.guildId && isSendableChannel(message.channel) && isCasualChatChannel(guildId, message.channel.id)) {
     if (isUserBlacklisted(guildId, message.author.id)) return;
 
-    const imageAttachment = message.attachments.find(
-      (att) => att.contentType?.startsWith('image/') ?? false
-    );
     // Raw content has user mentions as numeric <@id> tokens, which the
     // model can't read -- turn them into @names so it can tell who a
     // message is aimed at. The bot's own mention is dropped (being
@@ -93,27 +119,19 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     recordAmbientMessage(message.channel.id, {
       author: nameFor(message.author.id, message.author.username),
       content: bufferedContent,
-      hasImage: !!imageAttachment,
+      images: messageImageUrls(message),
       ts: Date.now(),
       addressedTo,
+      messageId: message.id,
+      replyToId: message.reference?.messageId,
     });
 
-    const reactFn = async (emoji: string): Promise<void> => {
-      await message.react(emoji);
-    };
     const botName = message.client.user?.username ?? '';
 
     if (isMentioned || isReplyToBot) {
-      await evaluateNow(message.channel.id, guildId, message.channel, imageAttachment?.url ?? null, reactFn, botName);
+      await evaluateNow(message.channel.id, guildId, message.channel, botName);
     } else {
-      scheduleEngagementCheck(
-        message.channel.id,
-        guildId,
-        message.channel,
-        imageAttachment?.url ?? null,
-        reactFn,
-        botName
-      );
+      scheduleEngagementCheck(message.channel.id, guildId, message.channel, botName);
     }
     return;
   }

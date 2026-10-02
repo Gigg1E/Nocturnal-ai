@@ -9,6 +9,7 @@ import {
 } from 'discord.js';
 import { logger } from '../utils/logger';
 import { handleMessageCreate } from './events/messageCreate';
+import { handleMessageUpdate } from './events/messageUpdate';
 import { handleInteractionCreate } from './events/interactionCreate';
 import { handleGuildCreate } from './events/guildCreate';
 import { commands, registerCommands } from './commands';
@@ -71,6 +72,9 @@ export function createClient(): BotClient {
 
   client.on(Events.GuildCreate, handleGuildCreate);
   client.on(Events.MessageCreate, handleMessageCreate);
+  client.on(Events.MessageUpdate, (oldMsg, newMsg) => {
+    handleMessageUpdate(oldMsg, newMsg).catch((err) => logger.debug('messageUpdate handler failed:', err));
+  });
   client.on(Events.InteractionCreate, handleInteractionCreate);
 
   // Error handling

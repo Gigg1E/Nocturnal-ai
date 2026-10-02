@@ -10,11 +10,16 @@ export interface Entry {
   author: string;
   isBot: boolean;
   content: string;
-  hasImage: boolean;
+  // Image URLs (attachments + link-preview images/GIFs). Kept for the life
+  // of the session so a later "look at his face" can refer back to one.
+  images?: string[];
   ts: number;
   // Set when the message @-mentions or replies to a specific other person
   // (not the bot) -- it's their exchange, not an open invitation.
   addressedTo?: string;
+  messageId?: string;
+  // Discord message this one is a reply to (any author).
+  replyToId?: string;
 }
 
 export interface LevelParams {
@@ -125,9 +130,81 @@ export function formatAgo(ts: number, now: number): string {
   return `${Math.max(1, Math.round(secs / 60))}m ago`;
 }
 
-export function formatEntry(e: Entry, now: number): string {
+// imageTag: which attached picture(s) this line's image(s) are ("image 1").
+// An entry with images but no tag gets a plain "(sent an image)" -- the
+// model can't see it this time and shouldn't guess what's in it.
+export function formatEntry(e: Entry, now: number, imageTag?: string): string {
   const who = e.isBot ? 'you' : e.addressedTo ? `${e.author} → @${e.addressedTo}` : e.author;
-  return `[${who}] (${formatAgo(e.ts, now)})${e.hasImage ? ' (sent an image)' : ''}: ${e.content}`;
+  const img = imageTag ? ` [${imageTag}]` : e.images?.length ? ' (sent an image)' : '';
+  return `[${who}] (${formatAgo(e.ts, now)})${img}: ${e.content}`;
+}
+
+// ── Images ─────────────────────────────────────────────────────────────────
+
+export const MAX_IMAGES = 3;
+
+// A new message pointing back at an earlier picture without replying to it.
+const LOOKBACK_RE = /\b(that|this|the|his|her|their|ur|your)\s+(pic|pics|picture|image|photo|meme|gif|screenshot|ss|face|fit|outfit)\b|\blook(ing)? at\b|\bwhat (is|was) (this|that)\b/i;
+
+export interface SelectedImage {
+  entry: Entry;
+  url: string;
+}
+
+// Which pictures the model actually gets to look at this time, oldest
+// first, at most MAX_IMAGES:
+//  1. every image in NEW (newest wins if over the cap),
+//  2. an earlier image a NEW message is a Discord reply to,
+//  3. if NEW has no images but points back at one ("that pic"), the most
+//     recent earlier image.
+// Anything else stays a text-only "(sent an image)".
+export function selectImages(snapshot: Entry[], fresh: Entry[]): SelectedImage[] {
+  const picked: SelectedImage[] = [];
+  const add = (entry: Entry, url: string): void => {
+    if (picked.length < MAX_IMAGES && !picked.some((p) => p.url === url)) picked.push({ entry, url });
+  };
+
+  for (const e of [...fresh].reverse()) for (const url of e.images ?? []) add(e, url);
+
+  for (const e of fresh) {
+    if (!e.replyToId) continue;
+    const target = snapshot.find((s) => s.messageId === e.replyToId);
+    for (const url of target?.images ?? []) add(target!, url);
+  }
+
+  if (!fresh.some((e) => e.images?.length) && fresh.some((e) => LOOKBACK_RE.test(e.content))) {
+    const prev = [...snapshot].reverse().find((e) => !fresh.includes(e) && e.images?.length);
+    if (prev) add(prev, prev.images![prev.images!.length - 1]);
+  }
+
+  return picked.sort((a, b) => snapshot.indexOf(a.entry) - snapshot.indexOf(b.entry));
+}
+
+// 0-1: how "out of nowhere" a NEW image is. Context of a picture is hard to
+// judge, so this only looks at timing: a picture dropped into a quiet
+// channel after a lull stands on its own (1); one posted mid-flow in a busy
+// chat is part of that conversation (~0), where momentum already carries it.
+export const IMAGE_LULL_MS = 90_000;
+
+export function imageStandalone(snapshot: Entry[], fresh: Entry[], momentum: number): number {
+  let best = 0;
+  for (const e of fresh) {
+    if (!e.images?.length || e.addressedTo) continue;
+    const idx = snapshot.indexOf(e);
+    const prev = idx > 0 ? snapshot[idx - 1] : undefined;
+    const gapScore = prev ? Math.min(1, Math.max(0, e.ts - prev.ts) / IMAGE_LULL_MS) : 1;
+    best = Math.max(best, 0.5 * (1 - momentum) + 0.5 * gapScore);
+  }
+  return best;
+}
+
+// Extra score for a standalone image, scaled by how interesting the model
+// found the moment: a dull screenshot dropped out of nowhere gets nothing
+// (interest <= 3), something outrageous/cool gets up to IMAGE_MAX_BOOST.
+export const IMAGE_MAX_BOOST = 3;
+
+export function imageBoost(standalone: number, interest: number): number {
+  return IMAGE_MAX_BOOST * standalone * Math.max(0, Math.min(1, (interest - 3) / 7));
 }
 
 // Every new message is aimed at some other specific person -- someone
@@ -180,10 +257,13 @@ export function conversationSignals(
     }
   }
 
+  // Only messages that could be aimed at the bot keep the conversation going
+  // -- one aimed at someone else ("@Rixo told you lol") right after the bot
+  // spoke is their exchange, not a reply to it.
   let inConversation = false;
   let firstReplyAfterBot = false;
   if (lastBotIdx >= 0 && now - entries[lastBotIdx].ts <= followUpWindowMs) {
-    const after = entries.slice(lastBotIdx + 1).filter((e) => !e.isBot);
+    const after = entries.slice(lastBotIdx + 1).filter((e) => !e.isBot && !e.addressedTo);
     inConversation = after.length > 0;
     firstReplyAfterBot = after.length > 0 && newEntries.includes(after[0]);
   }
@@ -244,6 +324,9 @@ export function shouldEngage(
   // else unless the bot itself is being talked to. Answers/corrections and
   // reactions are unaffected.
   chatBlocked = false,
+  // From imageBoost(). Counts toward every intent, but -- unlike bonus --
+  // never lifts chatBlocked: an image aimed at someone else isn't an opening.
+  imgBoost = 0,
 ): Verdict {
   if (intent === 'none') return { engage: false, score: interest, threshold: null };
   if (intent === 'chat' && chatBlocked && bonus === 0) {
@@ -251,14 +334,14 @@ export function shouldEngage(
   }
 
   if (intent === 'react') {
-    const score = interest + momentum * 2 + jitter;
+    const score = interest + momentum * 2 + imgBoost + jitter;
     return { engage: score >= p.thresholdReact, score, threshold: p.thresholdReact };
   }
 
   const threshold = intent === 'chat'
     ? (p.thresholdChat === null ? null : p.thresholdChat + chatPenalty)
     : p.thresholdAnswer;
-  const score = interest + bonus + momentum * 2 + jitter;
+  const score = interest + bonus + momentum * 2 + imgBoost + jitter;
   if (threshold === null) return { engage: false, score, threshold: null };
   return { engage: score >= threshold, score, threshold };
 }

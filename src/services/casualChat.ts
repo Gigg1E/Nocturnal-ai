@@ -2,7 +2,7 @@ import { TextChannel, NewsChannel, ThreadChannel, DMChannel, Message } from 'dis
 import { getConfig } from '../config';
 import { loadGuildConfig, resolveHeat } from '../config/guildConfig';
 import { logger } from '../utils/logger';
-import { imageUrlToBase64, OllamaMessage } from '../ollama/client';
+import { OllamaMessage } from '../ollama/client';
 import { runAgentLoop } from './chat';
 import {
   Entry,
@@ -19,6 +19,9 @@ import {
   shouldEngage,
   randomJitter,
   allAddressedElsewhere,
+  selectImages,
+  imageStandalone,
+  imageBoost,
 } from './conversationHeat';
 
 // "Answer Machine" mode: a channel-scoped alternative to the normal
@@ -70,7 +73,6 @@ interface ChannelState {
   // part of the transcript the model is allowed to act on.
   lastEvaluatedTs: number;
   debounceTimer: NodeJS.Timeout | null;
-  pendingImageUrl: string | null;
   burstStartedAt: number | null;
 }
 
@@ -85,7 +87,6 @@ function getState(channelId: string): ChannelState {
       lastReactAt: 0,
       lastEvaluatedTs: 0,
       debounceTimer: null,
-      pendingImageUrl: null,
       burstStartedAt: null,
     };
     channelStates.set(channelId, state);
@@ -116,12 +117,20 @@ export function cancelPendingEngagement(channelId: string): void {
   state.burstStartedAt = null;
 }
 
-export function recordAmbientMessage(
-  channelId: string,
-  entry: { author: string; content: string; hasImage: boolean; ts: number; addressedTo?: string }
-): void {
+export function recordAmbientMessage(channelId: string, entry: Omit<Entry, 'isBot'>): void {
   pushEntry(channelId, { ...entry, isBot: false });
   logger.debug(`Answer machine: buffered message in ${channelId} from ${entry.author}`);
+}
+
+// Discord fills in link previews (Tenor/GIPHY GIFs, pasted image links) a
+// moment after the message is created, via a message update. Attach them
+// to the buffered entry if it's still there.
+export function attachLateImages(channelId: string, messageId: string, images: string[]): void {
+  if (!images.length) return;
+  const entry = channelStates.get(channelId)?.buffer.find((e) => e.messageId === messageId);
+  if (!entry || entry.images?.length) return;
+  entry.images = images;
+  logger.debug(`Answer machine: link-preview image(s) attached to ${messageId} in ${channelId}`);
 }
 
 /**
@@ -135,12 +144,9 @@ export function scheduleEngagementCheck(
   channelId: string,
   guildId: string,
   channel: SendableChannel,
-  triggerImageUrl: string | null,
-  reactFn: (emoji: string) => Promise<void>,
   botName: string
 ): void {
   const state = getState(channelId);
-  if (triggerImageUrl) state.pendingImageUrl = triggerImageUrl;
   if (state.burstStartedAt === null) state.burstStartedAt = Date.now();
 
   const p = levelParams(resolveHeat(loadGuildConfig(guildId)));
@@ -151,7 +157,7 @@ export function scheduleEngagementCheck(
   state.debounceTimer = setTimeout(() => {
     state.debounceTimer = null;
     state.burstStartedAt = null;
-    evaluateEngagement(channelId, guildId, channel, reactFn, false, botName).catch((err) => {
+    evaluateEngagement(channelId, guildId, channel, false, botName).catch((err) => {
       logger.warn('Answer machine ambient check failed:', err);
     });
   }, delay);
@@ -168,20 +174,18 @@ export async function evaluateNow(
   channelId: string,
   guildId: string,
   channel: SendableChannel,
-  imageUrl: string | null,
-  reactFn: (emoji: string) => Promise<void>,
   botName: string
 ): Promise<void> {
   cancelPendingEngagement(channelId);
-  const state = getState(channelId);
-  if (imageUrl) state.pendingImageUrl = imageUrl;
-  await evaluateEngagement(channelId, guildId, channel, reactFn, true, botName);
+  await evaluateEngagement(channelId, guildId, channel, true, botName);
 }
 
 interface Decision {
   intent: Intent;
   interest: number;
   emoji?: string;
+  // 1-based index into the NEW lines -- which message a reaction goes on.
+  target?: number;
 }
 
 const DECISION_PROMPT = `You're a regular member of a Discord group chat, reading along. Rate the NEW messages only — the EARLIER section is background you've already seen; never respond to it again, and don't let an emotional moment from EARLIER color a new, unrelated message. Lines marked [you] are things you already said — don't repeat them. A line marked [name → @other] is aimed at that other person (greeting them, replying to them) — it's their exchange, not an invitation for you; don't act like it was said to you.
@@ -193,16 +197,59 @@ Pick ONE intent:
 - chat: there's a natural opening for a regular chat member to say something casual (an opinion, a joke, a relatable comment, or continuing a conversation someone is having with you)
 - none: nothing worth saying
 
+Images: a line tagged [image N] has that picture attached (image 1 is the first attached, and so on) — judge the picture itself. Something outrageous, impressive, funny or cool is worth a react or a comment even with no caption; an ordinary screenshot or photo isn't. A line that just says (sent an image) is a picture you can't see — don't guess what's in it.
+
 interest: 0-10, how natural or valuable it would be for you to say something right now. Be honest — don't inflate it.
 
-Reply with ONLY a JSON object, no code fences: {"intent": "<answer|correct|react|chat|none>", "interest": <integer 0-10>, "emoji": "<single emoji, only for react>"}`;
+Reply with ONLY a JSON object, no code fences: {"intent": "<answer|correct|react|chat|none>", "interest": <integer 0-10>, "emoji": "<single emoji, only for react>", "target": <number of the NEW line you're reacting to, only for react>}`;
 
 const INTENTS: Intent[] = ['none', 'answer', 'correct', 'react', 'chat'];
 
-function buildSections(earlier: Entry[], fresh: Entry[], now: number): string {
-  const earlierText = earlier.length ? earlier.map((e) => formatEntry(e, now)).join('\n') : '(nothing)';
-  const freshText = fresh.map((e) => formatEntry(e, now)).join('\n');
+// NEW lines are numbered for the decision call so a reaction can name which
+// message it belongs to; the reply call doesn't need the numbers.
+function buildSections(
+  earlier: Entry[],
+  fresh: Entry[],
+  now: number,
+  imageTags: Map<Entry, string>,
+  numbered: boolean,
+): string {
+  const line = (e: Entry): string => formatEntry(e, now, imageTags.get(e));
+  const earlierText = earlier.length ? earlier.map(line).join('\n') : '(nothing)';
+  const freshText = fresh.map((e, i) => (numbered ? `${i + 1}. ` : '') + line(e)).join('\n');
   return `EARLIER (already seen — context only):\n${earlierText}\n\nNEW since your last look:\n${freshText}`;
+}
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+async function fetchImage(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    if (Number(res.headers.get('content-length') ?? 0) > MAX_IMAGE_BYTES) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.length > MAX_IMAGE_BYTES ? null : buf.toString('base64');
+  } catch {
+    return null;
+  }
+}
+
+// Downloads the selected pictures and numbers the ones that actually loaded
+// ("image 1", "image 2" -- matching their order in the images array). A
+// failed download just falls back to the plain "(sent an image)" line.
+async function loadImages(snapshot: Entry[], fresh: Entry[]): Promise<{ images: string[]; tags: Map<Entry, string> }> {
+  const selected = selectImages(snapshot, fresh);
+  const data = await Promise.all(selected.map((s) => fetchImage(s.url)));
+  const images: string[] = [];
+  const tags = new Map<Entry, string>();
+  selected.forEach((s, i) => {
+    const b64 = data[i];
+    if (!b64) return;
+    images.push(b64);
+    const tag = `image ${images.length}`;
+    tags.set(s.entry, tags.has(s.entry) ? `${tags.get(s.entry)}, ${tag}` : tag);
+  });
+  return { images, tags };
 }
 
 // gemma4:cloud ignores Ollama's JSON-schema `format` option (confirmed by
@@ -211,11 +258,12 @@ function buildSections(earlier: Entry[], fresh: Entry[], now: number): string {
 function parseDecision(raw: string): Decision {
   const s = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
   try {
-    const o = JSON.parse(s) as { intent?: string; interest?: number; emoji?: string };
+    const o = JSON.parse(s) as { intent?: string; interest?: number; emoji?: string; target?: number };
     const intent = INTENTS.includes(o.intent as Intent) ? (o.intent as Intent) : 'none';
     const interest = typeof o.interest === 'number' ? Math.max(0, Math.min(10, Math.round(o.interest))) : 0;
     const emoji = typeof o.emoji === 'string' && o.emoji.trim() ? o.emoji.trim() : undefined;
-    return { intent, interest, emoji };
+    const target = typeof o.target === 'number' && Number.isInteger(o.target) ? o.target : undefined;
+    return { intent, interest, emoji, target };
   } catch {
     return { intent: 'none', interest: 0 };
   }
@@ -225,16 +273,25 @@ async function decideEngagement(
   earlier: Entry[],
   fresh: Entry[],
   now: number,
-  imageUrl: string | null,
+  images: string[],
+  imageTags: Map<Entry, string>,
   talkingToBot: boolean,
   openQuestion: boolean,
+  standaloneImage: boolean,
+  chatAllowed: boolean,
 ): Promise<Decision> {
-  const note = talkingToBot
+  // Below TalksALot heat "chat" can never fire, so a model that picks it
+  // would swallow a reaction that could have -- tell it up front.
+  let note = chatAllowed ? '' : '\n\nNote: casual chat is off in this channel — never pick chat; choose between answer, correct, react and none.';
+  note += talkingToBot
     ? '\n\nNote: the NEW messages are addressed to you or responding to something you said.'
     : openQuestion
       ? "\n\nNote: the latest message is a question to the whole room — that includes you. Treat it like you were asked, not like overhearing someone else's conversation."
       : '';
-  const prompt = `${DECISION_PROMPT}${note}\n\n${buildSections(earlier, fresh, now)}\n\nAnswer:`;
+  if (standaloneImage) {
+    note += '\n\nNote: someone just dropped a picture with no lead-up — judge it on its own merits, not as part of an earlier conversation.';
+  }
+  const prompt = `${DECISION_PROMPT}${note}\n\n${buildSections(earlier, fresh, now, imageTags, true)}\n\nAnswer:`;
 
   const body: Record<string, unknown> = {
     model: DECISION_MODEL,
@@ -242,14 +299,7 @@ async function decideEngagement(
     stream: false,
     options: { temperature: 0.2, num_predict: 150 },
   };
-
-  if (imageUrl) {
-    try {
-      body.images = [await imageUrlToBase64(imageUrl)];
-    } catch {
-      // Fall through without the image -- still worth a text-only decision.
-    }
-  }
+  if (images.length) body.images = images;
 
   const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
   const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
@@ -267,11 +317,12 @@ const ANSWER_INSTRUCTIONS = `You're an answer machine in a group chat -- you onl
 
 const CHAT_INSTRUCTIONS = `You're a regular member of this group chat and just decided to chime in on your own. Respond to what's in NEW -- EARLIER is background, don't bring it back up unless it's directly relevant to what's new. Write like a real chat message: short (usually one or two sentences), casual, no greetings, no summarizing what people said, don't force a question just to keep the conversation going, and don't repeat anything you already said (your earlier lines are marked [you]). Use the search tool only if you genuinely need current information.`;
 
+const IMAGE_INSTRUCTIONS = `Pictures attached to this message belong to the lines tagged [image N], in order. When one is relevant, respond to what's actually in it -- don't describe it back to the person who posted it, and don't guess at anything you can't make out. A line that only says (sent an image) is a picture you can't see.`;
+
 async function evaluateEngagement(
   channelId: string,
   guildId: string,
   channel: SendableChannel,
-  reactFn: (emoji: string) => Promise<void>,
   immediate: boolean,
   botName: string
 ): Promise<void> {
@@ -307,10 +358,13 @@ async function evaluateEngagement(
     return;
   }
 
-  const imageUrl = state.pendingImageUrl;
-  state.pendingImageUrl = null;
+  const { images, tags } = await loadImages(snapshot, fresh);
+  const standalone = imageStandalone(snapshot, fresh, momentum);
   const talkingToBot = signals.direct || signals.inConversation || signals.nameMentioned;
-  const decision = await decideEngagement(earlier, fresh, now, imageUrl, talkingToBot, signals.openQuestion);
+  const decision = await decideEngagement(
+    earlier, fresh, now, images, tags, talkingToBot, signals.openQuestion, standalone >= 0.6, p.thresholdChat !== null,
+  );
+  const imgBoost = imageBoost(standalone, decision.interest);
 
   const verdict = shouldEngage(
     decision.intent,
@@ -321,10 +375,12 @@ async function evaluateEngagement(
     yieldPenalty(snapshot, now, bonus),
     randomJitter(),
     allAddressedElsewhere(fresh),
+    imgBoost,
   );
   logger.info(
     `Answer machine ${channelId} heat=${heat}${immediate ? ' (direct)' : ''}: ` +
     `intent=${decision.intent} interest=${decision.interest} bonus=${bonus} momentum=${momentum.toFixed(2)} ` +
+    (images.length ? `images=${images.length} standalone=${standalone.toFixed(2)} imgBoost=${imgBoost.toFixed(1)} ` : '') +
     `score=${verdict.score.toFixed(1)} threshold=${verdict.threshold === null ? 'n/a' : verdict.threshold.toFixed(1)} ` +
     `→ ${verdict.engage ? 'ENGAGE' : 'skip'}${decision.emoji ? ' ' + decision.emoji : ''}`
   );
@@ -332,8 +388,13 @@ async function evaluateEngagement(
 
   if (decision.intent === 'react') {
     if (!reactAllowed || !decision.emoji) return;
+    // React on the message the model named, not just the latest one --
+    // a 💀 for a picture belongs on the picture.
+    const targetEntry = (decision.target && fresh[decision.target - 1]) || fresh[fresh.length - 1];
+    if (!targetEntry.messageId) return;
     try {
-      await reactFn(decision.emoji);
+      const target = await channel.messages.fetch(targetEntry.messageId);
+      await target.react(decision.emoji);
       state.lastReactAt = now;
     } catch (err) {
       logger.debug('Answer machine reaction failed (non-fatal):', err);
@@ -352,10 +413,13 @@ async function evaluateEngagement(
   // uses for its own status-message placeholder.
   const status = { msg: null as Message | null };
   try {
-    const instructions = decision.intent === 'chat' ? CHAT_INSTRUCTIONS : ANSWER_INSTRUCTIONS;
+    let instructions = decision.intent === 'chat' ? CHAT_INSTRUCTIONS : ANSWER_INSTRUCTIONS;
+    if (images.length) instructions += `\n\n${IMAGE_INSTRUCTIONS}`;
+    const userMsg: OllamaMessage = { role: 'user', content: buildSections(earlier, fresh, now, tags, false) };
+    if (images.length) userMsg.images = images;
     const context: OllamaMessage[] = [
       { role: 'system', content: `${getConfig().bot.systemPrompt}\n\n${instructions}` },
-      { role: 'user', content: buildSections(earlier, fresh, now) },
+      userMsg,
     ];
 
     const onToolStart = async (toolName: string): Promise<void> => {
@@ -379,7 +443,7 @@ async function evaluateEngagement(
       } else {
         await channel.send(trimmed);
       }
-      pushEntry(channelId, { author: 'you', isBot: true, content: aiContent, hasImage: false, ts: Date.now() });
+      pushEntry(channelId, { author: 'you', isBot: true, content: aiContent, ts: Date.now() });
       state.lastBotReplyAt = Date.now();
     }
   } catch (err) {
