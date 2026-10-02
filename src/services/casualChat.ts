@@ -227,8 +227,13 @@ async function decideEngagement(
   now: number,
   imageUrl: string | null,
   talkingToBot: boolean,
+  openQuestion: boolean,
 ): Promise<Decision> {
-  const note = talkingToBot ? '\n\nNote: the NEW messages are addressed to you or responding to something you said.' : '';
+  const note = talkingToBot
+    ? '\n\nNote: the NEW messages are addressed to you or responding to something you said.'
+    : openQuestion
+      ? "\n\nNote: the latest message is a question to the whole room — that includes you. Treat it like you were asked, not like overhearing someone else's conversation."
+      : '';
   const prompt = `${DECISION_PROMPT}${note}\n\n${buildSections(earlier, fresh, now)}\n\nAnswer:`;
 
   const body: Record<string, unknown> = {
@@ -305,7 +310,7 @@ async function evaluateEngagement(
   const imageUrl = state.pendingImageUrl;
   state.pendingImageUrl = null;
   const talkingToBot = signals.direct || signals.inConversation || signals.nameMentioned;
-  const decision = await decideEngagement(earlier, fresh, now, imageUrl, talkingToBot);
+  const decision = await decideEngagement(earlier, fresh, now, imageUrl, talkingToBot, signals.openQuestion);
 
   const verdict = shouldEngage(
     decision.intent,

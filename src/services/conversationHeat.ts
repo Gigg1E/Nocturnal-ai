@@ -153,6 +153,15 @@ export interface ConversationSignals {
   firstReplyAfterBot: boolean;
   nameMentioned: boolean;
   direct: boolean;
+  // Latest message is a question to the whole room ("y'all", "anyone") --
+  // an invitation that includes the bot, not a private exchange.
+  openQuestion: boolean;
+}
+
+const GROUP_ASK_RE = /\b(y'?all|you guys|you all|everyone|everybody|anyone|anybody)\b/i;
+
+export function isOpenQuestion(e: Entry): boolean {
+  return !e.isBot && !e.addressedTo && e.content.includes('?') && GROUP_ASK_RE.test(e.content);
 }
 
 export function conversationSignals(
@@ -183,13 +192,17 @@ export function conversationSignals(
   const nameRe = name ? new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i') : null;
   const nameMentioned = !!nameRe && newEntries.some((e) => nameRe.test(e.content));
 
-  return { inConversation, firstReplyAfterBot, nameMentioned, direct };
+  const latest = newEntries[newEntries.length - 1];
+  const openQuestion = !!latest && isOpenQuestion(latest);
+
+  return { inConversation, firstReplyAfterBot, nameMentioned, direct, openQuestion };
 }
 
 // Bonuses represent "someone is talking to me" — they boost speaking, not
-// reacting.
+// reacting. Any bonus also lifts the yield penalty (see yieldPenalty).
 export function bonusTotal(s: ConversationSignals): number {
-  return (s.inConversation ? 3 : 0) + (s.firstReplyAfterBot ? 1 : 0) + (s.nameMentioned ? 3 : 0) + (s.direct ? 4 : 0);
+  return (s.inConversation ? 3 : 0) + (s.firstReplyAfterBot ? 1 : 0) + (s.nameMentioned ? 3 : 0)
+    + (s.direct ? 4 : 0) + (s.openQuestion ? 2 : 0);
 }
 
 // Fair-share cap: the bot shouldn't hold more than its share of recent
