@@ -1,16 +1,33 @@
 import { TextChannel, NewsChannel, ThreadChannel, DMChannel, Message } from 'discord.js';
 import { getConfig } from '../config';
-import { loadGuildConfig, GuildConfig } from '../config/guildConfig';
+import { loadGuildConfig, resolveHeat } from '../config/guildConfig';
 import { logger } from '../utils/logger';
 import { imageUrlToBase64, OllamaMessage } from '../ollama/client';
 import { runAgentLoop } from './chat';
+import {
+  Entry,
+  Intent,
+  levelParams,
+  isSessionStale,
+  trimOverflow,
+  formatEntry,
+  computeMomentum,
+  conversationSignals,
+  bonusTotal,
+  fairShareExceeded,
+  yieldPenalty,
+  shouldEngage,
+  randomJitter,
+} from './conversationHeat';
 
 // "Answer Machine" mode: a channel-scoped alternative to the normal
-// mention/reply chat-bot pipeline (see messageCreate.ts) -- no memory, no
-// per-user history, a separate (much faster) model, and a narrow purpose:
-// answer genuine questions and correct misinformation, nothing else. A
-// channel with this enabled never falls through to the chat-bot/Kimi
-// pipeline, even when directly mentioned -- see messageCreate.ts's routing.
+// mention/reply chat-bot pipeline (see messageCreate.ts) -- no per-user
+// memory, a separate (much faster) model. At low heat it only answers
+// questions and corrects misinformation; at TalksALot heat it also joins
+// casual conversation. How often it speaks is decided by the server's heat
+// level (conversationHeat.ts); the model only rates each moment. A channel
+// with this enabled never falls through to the chat-bot/Kimi pipeline,
+// even when directly mentioned -- see messageCreate.ts's routing.
 type SendableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
 // Same idea as messageCreate.ts's THINKING_PHRASES -- a casual placeholder
@@ -34,60 +51,25 @@ function randomSearchingPhrase(): string {
 // Small, fast, cheap model used for BOTH the "should I engage" decision and
 // the actual reply text. Deliberately separate from the main chat-bot model
 // (currently kimi-k2.6:cloud): direct side-by-side latency testing found
-// kimi taking ~4.5s even for a one-line correction, while gemma4:cloud
-// produced good in-character corrections in 300-600ms. That's the actual
-// fix for "the answer machine feels slow" -- the decision step itself was
-// never the bottleneck (also ~300ms). Reply generation still goes through
-// runAgentLoop (search/weather/time/crypto tools available) so a genuine
-// question needing current info doesn't just get a stale/hallucinated
-// answer -- confirmed via direct testing that gemma4:cloud only reaches
-// for a tool when the question actually needs one (a math correction or
-// static fact stays a single ~300ms call; only real-time questions pay
-// the extra tool round trip).
+// kimi taking ~4.5s even for a one-line reply, while gemma4:cloud produced
+// good in-character replies in 300-600ms -- speed matters here because it's
+// interjecting into a conversation people are actively having. Reply
+// generation still goes through runAgentLoop (search/weather/time/crypto
+// tools) so a question needing current info doesn't get a stale answer.
 const DECISION_MODEL = 'gemma4:cloud';
 const REPLY_MODEL = 'gemma4:cloud';
 
-const BUFFER_SIZE = 15;
-const DEBOUNCE_MS = 2500;
-// Hard ceiling on how long a continuously-active channel can keep resetting
-// the debounce timer before getting evaluated anyway -- without this, a
-// channel where messages keep arriving faster than DEBOUNCE_MS apart would
-// never pause long enough to trigger a check at all.
-const MAX_WAIT_MS = 12_000;
-const REACT_COOLDOWN_MS = 30_000;
-const REPLY_COOLDOWN_MS: Record<GuildConfig['casualChat']['chattiness'], number> = {
-  low: 10 * 60_000,
-  medium: 5 * 60_000,
-  high: 2 * 60_000,
-};
-
-// Deterministic "is this a follow-up to what I just said" signal, mirroring
-// the base/boost + threshold pattern already used for tool-routing weights
-// (ToolWeightConfig in src/config/index.ts) rather than leaning entirely on
-// the LLM to notice a continuation buried in a long, noisy transcript.
-// Confirmed via direct testing that a *clean* 3-line follow-up transcript
-// reliably gets REPLY from the decision model -- a miss in a busy channel
-// is a signal-dilution problem (the follow-up gets lost in buffer clutter),
-// not a model-capability one, so a structural signal independent of
-// transcript content is the more reliable fix. Further candidates (e.g.
-// same-author continuity, keyword-based boosts) can be added the same way
-// if specific patterns keep getting missed.
-const FOLLOWUP_WINDOW_MS = 90_000;
-
-interface AmbientEntry {
-  author: string;
-  content: string;
-  hasImage: boolean;
-  ts: number;
-}
-
 interface ChannelState {
-  buffer: AmbientEntry[];
+  // The current conversation session ("burst" memory). Wiped after an idle
+  // gap, oldest entries trimmed on overflow -- see conversationHeat.ts.
+  buffer: Entry[];
   lastBotReplyAt: number;
   lastReactAt: number;
+  // Entries newer than this haven't been looked at yet -- they're the only
+  // part of the transcript the model is allowed to act on.
+  lastEvaluatedTs: number;
   debounceTimer: NodeJS.Timeout | null;
   pendingImageUrl: string | null;
-  pendingMessageId: string | null;
   burstStartedAt: number | null;
 }
 
@@ -100,9 +82,9 @@ function getState(channelId: string): ChannelState {
       buffer: [],
       lastBotReplyAt: 0,
       lastReactAt: 0,
+      lastEvaluatedTs: 0,
       debounceTimer: null,
       pendingImageUrl: null,
-      pendingMessageId: null,
       burstStartedAt: null,
     };
     channelStates.set(channelId, state);
@@ -110,13 +92,20 @@ function getState(channelId: string): ChannelState {
   return state;
 }
 
-// Called when a message directly addresses the bot (mention/reply) in an
-// answer-machine channel -- that's now handled immediately (see
-// evaluateNow below), not through the debounced ambient path. A debounce
-// timer queued from *earlier* ambient chatter could still be sitting there
-// though, and firing moments later with stale context would land right on
-// top of the direct exchange as an unrelated second voice. Cancelling it
-// here means the next ambient check starts fresh afterward.
+function pushEntry(channelId: string, entry: Entry): void {
+  const state = getState(channelId);
+  if (isSessionStale(state.buffer, entry.ts)) {
+    state.buffer = [];
+    state.lastEvaluatedTs = 0;
+    logger.debug(`Answer machine: session in ${channelId} went idle — starting fresh`);
+  }
+  state.buffer.push(entry);
+  state.buffer = trimOverflow(state.buffer);
+}
+
+// Called when a message directly addresses the bot (mention/reply) -- that's
+// handled immediately via evaluateNow, so any debounce timer queued from
+// earlier ambient chatter is cancelled rather than firing on top of it.
 export function cancelPendingEngagement(channelId: string): void {
   const state = getState(channelId);
   if (state.debounceTimer) {
@@ -128,102 +117,124 @@ export function cancelPendingEngagement(channelId: string): void {
 
 export function recordAmbientMessage(
   channelId: string,
-  entry: AmbientEntry
+  entry: { author: string; content: string; hasImage: boolean; ts: number }
 ): void {
-  const state = getState(channelId);
-  state.buffer.push(entry);
-  if (state.buffer.length > BUFFER_SIZE) {
-    state.buffer = state.buffer.slice(-BUFFER_SIZE);
-  }
+  pushEntry(channelId, { ...entry, isBot: false });
   logger.debug(`Answer machine: buffered message in ${channelId} from ${entry.author}`);
 }
 
 /**
  * Debounces ambient (unprompted) engagement checks: a burst of messages in a
  * channel collapses into a single decision after the conversation actually
- * pauses, instead of firing a model call per message. `messageId`/`imageUrl`
- * track the specific triggering message so a REACT lands on the right one
- * and a REPLY/vision check can see the latest image, even if a few
- * text-only messages followed it before the debounce fired. Not used for
- * direct mentions/replies -- those go through evaluateNow instead, which
- * skips the wait entirely.
+ * pauses, instead of firing a model call per message. Debounce length and
+ * the hard ceiling for a continuously-busy channel both scale with heat.
+ * Not used for direct mentions/replies -- those go through evaluateNow.
  */
 export function scheduleEngagementCheck(
   channelId: string,
   guildId: string,
   channel: SendableChannel,
-  triggerMessageId: string,
   triggerImageUrl: string | null,
-  reactFn: (emoji: string) => Promise<void>
+  reactFn: (emoji: string) => Promise<void>,
+  botName: string
 ): void {
   const state = getState(channelId);
-  state.pendingMessageId = triggerMessageId;
   if (triggerImageUrl) state.pendingImageUrl = triggerImageUrl;
   if (state.burstStartedAt === null) state.burstStartedAt = Date.now();
 
+  const p = levelParams(resolveHeat(loadGuildConfig(guildId)));
   const elapsed = Date.now() - state.burstStartedAt;
-  const delay = elapsed >= MAX_WAIT_MS ? 0 : Math.min(DEBOUNCE_MS, MAX_WAIT_MS - elapsed);
+  const delay = elapsed >= p.maxWaitMs ? 0 : Math.min(p.debounceMs, p.maxWaitMs - elapsed);
 
   if (state.debounceTimer) clearTimeout(state.debounceTimer);
   state.debounceTimer = setTimeout(() => {
     state.debounceTimer = null;
     state.burstStartedAt = null;
-    logger.debug(`Answer machine: evaluating ambient engagement for ${channelId}`);
-    evaluateEngagement(channelId, guildId, channel, reactFn, false).catch((err) => {
+    evaluateEngagement(channelId, guildId, channel, reactFn, false, botName).catch((err) => {
       logger.warn('Answer machine ambient check failed:', err);
     });
   }, delay);
 }
 
 /**
- * A direct mention/reply in an answer-machine channel: evaluated right
- * away (no debounce -- someone directly addressing it deserves an
- * immediate look, not a wait-for-a-lull check) and not subject to the
- * reply/react cooldowns (those exist to stop it butting into ambient
- * chatter too often; they were never meant to block a real answer to
- * someone who actually asked). Still runs through the exact same
- * genuine-question/misinformation criteria as ambient messages -- being
- * mentioned doesn't force a response if there's nothing to answer or
- * correct (e.g. "@Nocturnal say something" with no actual question stays
- * silent, by design).
+ * A direct mention/reply: evaluated right away and not subject to the
+ * reply/react cooldowns or the fair-share cap (those exist to stop it
+ * butting into ambient chatter too often, not to block someone who's
+ * actually talking to it). Still goes through the same heat-based decision
+ * -- being addressed is a big score boost, not a guaranteed reply.
  */
 export async function evaluateNow(
   channelId: string,
   guildId: string,
   channel: SendableChannel,
   imageUrl: string | null,
-  reactFn: (emoji: string) => Promise<void>
+  reactFn: (emoji: string) => Promise<void>,
+  botName: string
 ): Promise<void> {
   cancelPendingEngagement(channelId);
   const state = getState(channelId);
   if (imageUrl) state.pendingImageUrl = imageUrl;
-  await evaluateEngagement(channelId, guildId, channel, reactFn, true);
+  await evaluateEngagement(channelId, guildId, channel, reactFn, true, botName);
 }
 
 interface Decision {
-  action: 'ignore' | 'react' | 'reply';
+  intent: Intent;
+  interest: number;
   emoji?: string;
 }
 
-const DECISION_PROMPT = `You're an AI passively watching a group chat. You mostly stay quiet.
+const DECISION_PROMPT = `You're a regular member of a Discord group chat, reading along. Rate the NEW messages only — the EARLIER section is background you've already seen; never respond to it again, and don't let an emotional moment from EARLIER color a new, unrelated message. Lines marked [you] are things you already said — don't repeat them.
 
-Respond with exactly ONE line, no explanation:
-- IGNORE - the common case: small talk, opinions, jokes, venting/mood with no concrete detail, social coordination. A conversation being interesting is NOT enough on its own to respond.
-- REACT:<emoji> - something concrete and emotionally notable just happened or was just described -- good OR bad (an achievement, good news, sad news, a frustrating moment, something funny or embarrassing) -- worth a quick emoji acknowledgment, not a full reply. A short reaction from someone else ("congrats!", "lol", "dang") doesn't change what's being talked about. BUT once the conversation has clearly moved on to something new and unrelated, don't let an earlier emotional moment carry over and color that new, separate message -- judge the new message on its own.
-- REPLY - ONLY when: (a) someone asks a genuine, answerable question nobody has already answered correctly, or (b) someone states something factually incorrect that nobody has already corrected. Do not reply just because a conversation is happening or a topic is interesting.`;
+Pick ONE intent:
+- answer: someone asked a genuine, answerable question nobody has answered correctly yet
+- correct: someone stated something factually wrong nobody has corrected yet
+- react: something concrete and emotionally notable just happened (achievement, good/bad news, something funny or embarrassing) — an emoji fits, a full reply would be overkill. It still counts if someone else already responded to it in NEW (e.g. "my coworker got laid off" then "dang, I feel bad") — a short reaction from someone else doesn't change what's being talked about. Vague mood with no specific event doesn't count.
+- chat: there's a natural opening for a regular chat member to say something casual (an opinion, a joke, a relatable comment, or continuing a conversation someone is having with you)
+- none: nothing worth saying
 
-async function decideEngagement(buffer: AmbientEntry[], imageUrl: string | null, isLikelyFollowUp: boolean): Promise<Decision> {
-  const transcript = buffer.map((e) => `[${e.author}]${e.hasImage ? ' (sent an image)' : ''}: ${e.content}`).join('\n');
-  const hint = isLikelyFollowUp
-    ? "\n\nNote: the latest message immediately follows your own last reply in this thread and looks like a direct follow-up on it -- lean toward REPLY unless it's clearly unrelated."
-    : '';
-  const prompt = `${DECISION_PROMPT}${hint}\n\nRecent conversation:\n${transcript}\n\nDecision:`;
+interest: 0-10, how natural or valuable it would be for you to say something right now. Be honest — don't inflate it.
+
+Reply with ONLY a JSON object, no code fences: {"intent": "<answer|correct|react|chat|none>", "interest": <integer 0-10>, "emoji": "<single emoji, only for react>"}`;
+
+const INTENTS: Intent[] = ['none', 'answer', 'correct', 'react', 'chat'];
+
+function buildSections(earlier: Entry[], fresh: Entry[], now: number): string {
+  const earlierText = earlier.length ? earlier.map((e) => formatEntry(e, now)).join('\n') : '(nothing)';
+  const freshText = fresh.map((e) => formatEntry(e, now)).join('\n');
+  return `EARLIER (already seen — context only):\n${earlierText}\n\nNEW since your last look:\n${freshText}`;
+}
+
+// gemma4:cloud ignores Ollama's JSON-schema `format` option (confirmed by
+// direct testing -- it returns fenced JSON with made-up intents), so the
+// shape is requested in the prompt and validated here instead.
+function parseDecision(raw: string): Decision {
+  const s = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  try {
+    const o = JSON.parse(s) as { intent?: string; interest?: number; emoji?: string };
+    const intent = INTENTS.includes(o.intent as Intent) ? (o.intent as Intent) : 'none';
+    const interest = typeof o.interest === 'number' ? Math.max(0, Math.min(10, Math.round(o.interest))) : 0;
+    const emoji = typeof o.emoji === 'string' && o.emoji.trim() ? o.emoji.trim() : undefined;
+    return { intent, interest, emoji };
+  } catch {
+    return { intent: 'none', interest: 0 };
+  }
+}
+
+async function decideEngagement(
+  earlier: Entry[],
+  fresh: Entry[],
+  now: number,
+  imageUrl: string | null,
+  talkingToBot: boolean,
+): Promise<Decision> {
+  const note = talkingToBot ? '\n\nNote: the NEW messages are addressed to you or responding to something you said.' : '';
+  const prompt = `${DECISION_PROMPT}${note}\n\n${buildSections(earlier, fresh, now)}\n\nAnswer:`;
 
   const body: Record<string, unknown> = {
     model: DECISION_MODEL,
     prompt,
     stream: false,
-    options: { temperature: 0.1, num_predict: 150 },
+    options: { temperature: 0.2, num_predict: 150 },
   };
 
   if (imageUrl) {
@@ -240,54 +251,82 @@ async function decideEngagement(buffer: AmbientEntry[], imageUrl: string | null,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!response.ok) return { action: 'ignore' };
+  if (!response.ok) return { intent: 'none', interest: 0 };
 
   const data = (await response.json()) as { response?: string };
-  const line = (data.response ?? '').trim().split('\n')[0] ?? '';
-
-  const reactMatch = line.match(/^REACT\s*:\s*(\S+)/i);
-  if (reactMatch) return { action: 'react', emoji: reactMatch[1] };
-  if (/^REPLY\b/i.test(line)) return { action: 'reply' };
-  return { action: 'ignore' };
+  return parseDecision(data.response ?? '');
 }
+
+const ANSWER_INSTRUCTIONS = `You're an answer machine in a group chat -- you only speak up to answer a genuine question or correct misinformation in the NEW messages. Keep it short (1-3 sentences), stay in character/tone, and don't narrate or summarize the conversation back. Use the search tool if you need current/real-time information you don't already know -- don't guess at things that have likely changed since your training. Important: you already decided this deserves a real answer, so give one -- your personality flavors HOW you answer (dry, blunt, funny, whatever fits), it is never a reason to deflect, refuse, or brush off the actual question. NEVER respond with a refusal or a deflecting joke that avoids answering (e.g. "go look it up yourself", "I'm not doing that for you", "figure it out"). Every reply must contain the actual answer or correction -- attitude is seasoning, not a substitute.`;
+
+const CHAT_INSTRUCTIONS = `You're a regular member of this group chat and just decided to chime in on your own. Respond to what's in NEW -- EARLIER is background, don't bring it back up unless it's directly relevant to what's new. Write like a real chat message: short (usually one or two sentences), casual, no greetings, no summarizing what people said, don't force a question just to keep the conversation going, and don't repeat anything you already said (your earlier lines are marked [you]). Use the search tool only if you genuinely need current information.`;
 
 async function evaluateEngagement(
   channelId: string,
   guildId: string,
   channel: SendableChannel,
   reactFn: (emoji: string) => Promise<void>,
-  immediate: boolean
+  immediate: boolean,
+  botName: string
 ): Promise<void> {
   const state = getState(channelId);
-  if (state.buffer.length === 0) return;
+  const now = Date.now();
+  if (isSessionStale(state.buffer, now)) {
+    state.buffer = [];
+    state.lastEvaluatedTs = 0;
+  }
+  if (!state.buffer.length) return;
+
+  const snapshot = state.buffer.slice();
+  const fresh = snapshot.filter((e) => !e.isBot && e.ts > state.lastEvaluatedTs);
+  if (!fresh.length) return;
+  const earlier = snapshot.filter((e) => !fresh.includes(e));
+  // Advance regardless of outcome -- anything arriving during the model
+  // call stays "new" for the next look.
+  state.lastEvaluatedTs = snapshot[snapshot.length - 1].ts;
 
   const guildConfig = loadGuildConfig(guildId);
-  const now = Date.now();
-  const replyCooldown = REPLY_COOLDOWN_MS[guildConfig.casualChat.chattiness];
+  const heat = resolveHeat(guildConfig);
+  const p = levelParams(heat);
 
-  // The message right before the newest one (the one that triggered this
-  // check) being the bot's own, within FOLLOWUP_WINDOW_MS, means this is
-  // very likely someone continuing the exchange the bot just started --
-  // that shouldn't get blocked by the "don't butt in unprompted too often"
-  // cooldown, which exists for a different problem entirely.
-  const secondLastEntry = state.buffer[state.buffer.length - 2];
-  const isLikelyFollowUp =
-    secondLastEntry?.author === 'you' && now - state.lastBotReplyAt <= FOLLOWUP_WINDOW_MS;
+  const signals = conversationSignals(snapshot, fresh, now, p.followUpWindowMs, botName, immediate);
+  const bonus = bonusTotal(signals);
+  const momentum = computeMomentum(snapshot, now);
 
-  const canReply = immediate || isLikelyFollowUp || now - state.lastBotReplyAt >= replyCooldown;
-  const canReact = immediate || now - state.lastReactAt >= REACT_COOLDOWN_MS;
-  if (!canReply && !canReact) {
-    logger.debug(`Answer machine: ${channelId} on cooldown (canReply=${canReply}, canReact=${canReact})`);
+  const replyAllowed = (immediate || signals.inConversation || now - state.lastBotReplyAt >= p.replyCooldownMs)
+    && (immediate || !fairShareExceeded(snapshot));
+  const reactAllowed = immediate || now - state.lastReactAt >= p.reactCooldownMs;
+  if (!replyAllowed && !reactAllowed) {
+    logger.debug(`Answer machine: ${channelId} gated (cooldown/fair-share)`);
     return;
   }
 
-  const decision = await decideEngagement(state.buffer, state.pendingImageUrl, isLikelyFollowUp);
+  const imageUrl = state.pendingImageUrl;
   state.pendingImageUrl = null;
-  logger.info(`Answer machine decision for ${channelId}${immediate ? ' (direct)' : ''}${isLikelyFollowUp ? ' (follow-up)' : ''}: ${decision.action}${decision.emoji ? ':' + decision.emoji : ''}`);
+  const talkingToBot = signals.direct || signals.inConversation || signals.nameMentioned;
+  const decision = await decideEngagement(earlier, fresh, now, imageUrl, talkingToBot);
 
-  if (decision.action === 'react' && canReact) {
+  const verdict = shouldEngage(
+    decision.intent,
+    decision.interest,
+    p,
+    momentum,
+    bonus,
+    yieldPenalty(snapshot, now, bonus),
+    randomJitter(),
+  );
+  logger.info(
+    `Answer machine ${channelId} heat=${heat}${immediate ? ' (direct)' : ''}: ` +
+    `intent=${decision.intent} interest=${decision.interest} bonus=${bonus} momentum=${momentum.toFixed(2)} ` +
+    `score=${verdict.score.toFixed(1)} threshold=${verdict.threshold === null ? 'n/a' : verdict.threshold.toFixed(1)} ` +
+    `→ ${verdict.engage ? 'ENGAGE' : 'skip'}${decision.emoji ? ' ' + decision.emoji : ''}`
+  );
+  if (!verdict.engage) return;
+
+  if (decision.intent === 'react') {
+    if (!reactAllowed || !decision.emoji) return;
     try {
-      await reactFn(decision.emoji!);
+      await reactFn(decision.emoji);
       state.lastReactAt = now;
     } catch (err) {
       logger.debug('Answer machine reaction failed (non-fatal):', err);
@@ -295,58 +334,49 @@ async function evaluateEngagement(
     return;
   }
 
-  if (decision.action === 'reply' && canReply) {
-    const typingInterval = setInterval(() => {
-      channel.sendTyping().catch(() => {});
-    }, 9000);
-    await channel.sendTyping().catch(() => {});
-    // Object wrapper so TypeScript doesn't narrow this to `never` across the
-    // async onToolStart closure mutating it -- same pattern messageCreate.ts
-    // uses for its own status-message placeholder.
-    const status = { msg: null as Message | null };
-    try {
-      const globalConfig = getConfig();
-      const transcript = state.buffer.map((e) => `[${e.author}]: ${e.content}`);
-      const context: OllamaMessage[] = [
-        {
-          role: 'system',
-          content: `${globalConfig.bot.systemPrompt}\n\nYou're an answer machine in a group chat -- you only speak up to answer a genuine question or correct misinformation, nothing else. Keep it short (1-3 sentences), stay in character/tone, and don't narrate or summarize the conversation back. Use the search tool if you need current/real-time information you don't already know -- don't guess at things that have likely changed since your training. Important: you already decided this question deserves a real answer, so give one -- your personality flavors HOW you answer (dry, blunt, funny, whatever fits), it is never a reason to deflect, refuse, or brush off the actual question instead of answering it. NEVER respond with a refusal or a deflecting joke that avoids answering (e.g. "go look it up yourself", "I'm not doing that for you", "figure it out"). Every reply must contain the actual answer or correction, delivered with whatever attitude fits -- attitude is seasoning, not a substitute for the answer.`,
-        },
-        { role: 'user', content: transcript.join('\n') },
-      ];
+  if (!replyAllowed) return;
 
-      const onToolStart = async (toolName: string): Promise<void> => {
-        if (toolName === 'search_web' && !status.msg) {
-          try {
-            status.msg = await channel.send(randomSearchingPhrase());
-          } catch (err) {
-            logger.debug('Answer machine searching-placeholder failed (non-fatal):', err);
-          }
-        }
-      };
+  const typingInterval = setInterval(() => {
+    channel.sendTyping().catch(() => {});
+  }, 9000);
+  await channel.sendTyping().catch(() => {});
+  // Object wrapper so TypeScript doesn't narrow this to `never` across the
+  // async onToolStart closure mutating it -- same pattern messageCreate.ts
+  // uses for its own status-message placeholder.
+  const status = { msg: null as Message | null };
+  try {
+    const instructions = decision.intent === 'chat' ? CHAT_INSTRUCTIONS : ANSWER_INSTRUCTIONS;
+    const context: OllamaMessage[] = [
+      { role: 'system', content: `${getConfig().bot.systemPrompt}\n\n${instructions}` },
+      { role: 'user', content: buildSections(earlier, fresh, now) },
+    ];
 
-      const aiContent = await runAgentLoop(context, guildConfig.tools.enabled, { onToolStart }, REPLY_MODEL);
-      clearInterval(typingInterval);
-      if (aiContent.trim()) {
-        const trimmed = aiContent.slice(0, 1999);
-        if (status.msg) {
-          await status.msg.edit(trimmed).catch(async () => {
-            await channel.send(trimmed);
-          });
-        } else {
-          await channel.send(trimmed);
+    const onToolStart = async (toolName: string): Promise<void> => {
+      if (toolName === 'search_web' && !status.msg) {
+        try {
+          status.msg = await channel.send(randomSearchingPhrase());
+        } catch (err) {
+          logger.debug('Answer machine searching-placeholder failed (non-fatal):', err);
         }
-        recordAmbientMessage(channelId, {
-          author: 'you',
-          content: aiContent,
-          hasImage: false,
-          ts: Date.now(),
-        });
-        state.lastBotReplyAt = now;
       }
-    } catch (err) {
-      clearInterval(typingInterval);
-      logger.warn('Answer machine reply failed:', err);
+    };
+
+    const aiContent = await runAgentLoop(context, guildConfig.tools.enabled, { onToolStart }, REPLY_MODEL);
+    clearInterval(typingInterval);
+    if (aiContent.trim()) {
+      const trimmed = aiContent.slice(0, 1999);
+      if (status.msg) {
+        await status.msg.edit(trimmed).catch(async () => {
+          await channel.send(trimmed);
+        });
+      } else {
+        await channel.send(trimmed);
+      }
+      pushEntry(channelId, { author: 'you', isBot: true, content: aiContent, hasImage: false, ts: Date.now() });
+      state.lastBotReplyAt = Date.now();
     }
+  } catch (err) {
+    clearInterval(typingInterval);
+    logger.warn('Answer machine reply failed:', err);
   }
 }

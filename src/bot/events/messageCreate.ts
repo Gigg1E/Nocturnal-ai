@@ -51,10 +51,11 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   // Answer Machine channels intercept everything -- ambient chatter AND
   // direct mentions/replies -- before the chat-bot/Kimi pipeline below ever
   // sees them. A channel opted into this mode never falls through to the
-  // normal mention pipeline: mentioning the bot here still only gets a
-  // response if there's a genuine question or misinformation to act on
-  // (evaluated immediately instead of waiting for a lull), not because it
-  // was addressed. No memory, no per-user history either way.
+  // normal mention pipeline: mentioning the bot here is evaluated
+  // immediately (no waiting for a lull) through the same heat-based
+  // decision as ambient messages -- being addressed boosts the score but
+  // doesn't force a reply. No per-user memory either way; only the
+  // channel's short-lived conversation session.
   if (message.guildId && isSendableChannel(message.channel) && isCasualChatChannel(guildId, message.channel.id)) {
     if (isUserBlacklisted(guildId, message.author.id)) return;
 
@@ -76,17 +77,18 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     const reactFn = async (emoji: string): Promise<void> => {
       await message.react(emoji);
     };
+    const botName = message.client.user?.username ?? '';
 
     if (isMentioned || isReplyToBot) {
-      await evaluateNow(message.channel.id, guildId, message.channel, imageAttachment?.url ?? null, reactFn);
+      await evaluateNow(message.channel.id, guildId, message.channel, imageAttachment?.url ?? null, reactFn, botName);
     } else {
       scheduleEngagementCheck(
         message.channel.id,
         guildId,
         message.channel,
-        message.id,
         imageAttachment?.url ?? null,
-        reactFn
+        reactFn,
+        botName
       );
     }
     return;

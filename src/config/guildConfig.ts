@@ -39,8 +39,35 @@ export interface GuildConfig {
   // opt a channel in.
   casualChat: {
     channels: string[];
-    chattiness: 'low' | 'medium' | 'high';
+    // Admin-facing "Heat" preset. 'custom' uses customHeat (0-100) instead.
+    chattiness: HeatPreset;
+    customHeat: number;
   };
+}
+
+export type HeatPreset = 'low' | 'medium' | 'high' | 'talksalot' | 'custom';
+
+const PRESET_HEAT: Record<Exclude<HeatPreset, 'custom'>, number> = {
+  low: 15,
+  medium: 35,
+  high: 60,
+  talksalot: 85,
+};
+
+export const HEAT_PRESET_LABELS: Record<HeatPreset, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  talksalot: 'TalksALot',
+  custom: 'Custom',
+};
+
+export function resolveHeat(config: GuildConfig): number {
+  const preset = config.casualChat.chattiness;
+  if (preset === 'custom') {
+    return Math.max(0, Math.min(100, Math.round(config.casualChat.customHeat)));
+  }
+  return PRESET_HEAT[preset] ?? PRESET_HEAT.medium;
 }
 
 // Factory defaults for a brand-new guild that hasn't customized anything yet.
@@ -72,6 +99,7 @@ export const DEFAULT_GUILD_CONFIG: GuildConfig = {
   casualChat: {
     channels: [],
     chattiness: 'medium',
+    customHeat: 50,
   },
 };
 
@@ -194,9 +222,10 @@ export function removeCasualChannel(guildId: string, channelId: string): void {
   }
 }
 
-export function setCasualChattiness(guildId: string, chattiness: GuildConfig['casualChat']['chattiness']): void {
+export function setCasualChattiness(guildId: string, chattiness: HeatPreset, customHeat?: number): void {
   const config = loadGuildConfig(guildId);
   config.casualChat.chattiness = chattiness;
+  if (customHeat !== undefined) config.casualChat.customHeat = customHeat;
   saveGuildConfig(guildId, config);
 }
 

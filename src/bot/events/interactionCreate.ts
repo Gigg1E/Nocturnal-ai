@@ -40,7 +40,9 @@ import {
   setCasualChattiness,
   loadGuildConfig,
   saveGuildConfig,
-  GuildConfig,
+  resolveHeat,
+  HeatPreset,
+  HEAT_PRESET_LABELS,
 } from '../../config/guildConfig';
 
 export async function handleInteractionCreate(interaction: Interaction): Promise<void> {
@@ -185,6 +187,9 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
     case 'webhook_add_modal':
       await handleWebhookAddModal(interaction);
       break;
+    case 'channel_heat_modal':
+      await handleChannelHeatModal(interaction);
+      break;
     default:
       await interaction.reply({
         content: 'Unknown action.',
@@ -326,14 +331,16 @@ async function handleChannelActionSelect(interaction: StringSelectMenuInteractio
   if (choice === 'chattiness') {
     const menu = new StringSelectMenuBuilder()
       .setCustomId('channel_chattiness')
-      .setPlaceholder('How often should it chime in?')
+      .setPlaceholder('How much should it talk?')
       .addOptions(
-        { label: 'Low', value: 'low', description: 'Chimes in rarely (~every 10 min at most)' },
-        { label: 'Medium', value: 'medium', description: 'Chimes in occasionally (~every 5 min at most)' },
-        { label: 'High', value: 'high', description: 'Chimes in more often (~every 2 min at most)' }
+        { label: 'Low (15)', value: 'low', description: 'Answers & corrections only, rarely' },
+        { label: 'Medium (35)', value: 'medium', description: 'Answers & corrections, occasionally' },
+        { label: 'High (60)', value: 'high', description: 'Answers & corrections, more often; reacts more' },
+        { label: 'TalksALot (85)', value: 'talksalot', description: 'Also joins casual conversation and holds a back-and-forth' },
+        { label: 'Custom (0-100)', value: 'custom', description: 'Set an exact heat — 70+ unlocks casual chat' }
       );
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
-    await interaction.update({ content: 'How chatty should the Answer Machine be?', embeds: [], components: [row] });
+    await interaction.update({ content: 'How much heat should the Answer Machine have?', embeds: [], components: [row] });
     return;
   }
 
@@ -352,9 +359,51 @@ async function handleChannelActionSelect(interaction: StringSelectMenuInteractio
 }
 
 async function handleChannelChattinessSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  const chattiness = interaction.values[0] as GuildConfig['casualChat']['chattiness'];
-  setCasualChattiness(interaction.guildId!, chattiness);
-  await interaction.update({ content: `Answer Machine chattiness set to **${chattiness}**.`, embeds: [], components: [] });
+  const preset = interaction.values[0] as HeatPreset;
+
+  if (preset === 'custom') {
+    // Modal has to be the first response to this select interaction.
+    const modal = new ModalBuilder()
+      .setCustomId('channel_heat_modal')
+      .setTitle('Custom Answer Machine heat')
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('heat')
+            .setLabel('Heat (0-100) — 70+ unlocks casual chat')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g. 75')
+            .setMaxLength(3)
+            .setRequired(true)
+        )
+      );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  setCasualChattiness(interaction.guildId!, preset);
+  const heat = resolveHeat(loadGuildConfig(interaction.guildId!));
+  await interaction.update({ content: `Answer Machine heat set to **${HEAT_PRESET_LABELS[preset]} (${heat})**.`, embeds: [], components: [] });
+}
+
+async function handleChannelHeatModal(interaction: ModalSubmitInteraction): Promise<void> {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'This requires Administrator permission in this server.', ephemeral: true });
+    return;
+  }
+  const raw = interaction.fields.getTextInputValue('heat').trim();
+  const heat = /^\d{1,3}$/.test(raw) ? parseInt(raw, 10) : NaN;
+  if (!Number.isInteger(heat) || heat < 0 || heat > 100) {
+    await interaction.reply({ content: 'Heat must be a whole number from 0 to 100.', ephemeral: true });
+    return;
+  }
+  setCasualChattiness(interaction.guildId!, 'custom', heat);
+  const content = `Answer Machine heat set to **Custom (${heat})**${heat >= 70 ? ' — casual chat is on.' : '.'}`;
+  if (interaction.isFromMessage()) {
+    await interaction.update({ content, embeds: [], components: [] });
+  } else {
+    await interaction.reply({ content, ephemeral: true });
+  }
 }
 
 async function handleChannelPick(interaction: ChannelSelectMenuInteraction, op: string): Promise<void> {

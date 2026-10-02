@@ -7,7 +7,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { Command } from './index';
-import { loadGuildConfig } from '../../config/guildConfig';
+import { loadGuildConfig, resolveHeat, HEAT_PRESET_LABELS } from '../../config/guildConfig';
 
 // Bare command, no subcommands — shows current state plus a dropdown for
 // what to do next, matching the /memory and /personality pattern. Picking
@@ -48,8 +48,8 @@ export const channelCommand: Command = {
             : 'None (opt-in only)',
         },
         {
-          name: 'Answer Machine chattiness',
-          value: config.casualChat.chattiness,
+          name: 'Answer Machine heat',
+          value: `${HEAT_PRESET_LABELS[config.casualChat.chattiness] ?? config.casualChat.chattiness} (${resolveHeat(config)})`,
         }
       )
       .setFooter({ text: 'Blocked always overrides allowed/Answer Machine for that channel. Answer Machine channels never use the regular chat-bot pipeline, even when mentioned.' });
@@ -64,7 +64,7 @@ export const channelCommand: Command = {
         { label: 'Unblock a channel', value: 'unblock', description: 'Remove from the blocked list' },
         { label: 'Enable Answer Machine', value: 'casual_enable', description: 'Answers genuine questions & corrects misinformation here' },
         { label: 'Disable Answer Machine', value: 'casual_disable', description: 'Remove from the Answer Machine' },
-        { label: 'Set Answer Machine chattiness', value: 'chattiness', description: 'How often it speaks up' },
+        { label: 'Set Answer Machine heat', value: 'chattiness', description: 'How much it talks (TalksALot joins casual chat)' },
         { label: 'Reset everything', value: 'reset', description: 'Clear all channel restrictions and the Answer Machine' }
       );
 
