@@ -25,6 +25,12 @@ import {
 } from '../../services/memory';
 import { setUserPersonality, resetUserPersonality, MAX_PERSONALITY_LENGTH } from '../../services/personality';
 import {
+  handleWebhookActionSelect,
+  handleWebhookPickSelect,
+  handleWebhookChannelSelect,
+  handleWebhookAddModal,
+} from '../commands/webhook';
+import {
   addAllowedChannel,
   removeAllowedChannel,
   addBlockedChannel,
@@ -133,6 +139,12 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
     case 'channel_chattiness':
       await handleChannelChattinessSelect(interaction);
       break;
+    case 'webhook_action':
+      await handleWebhookActionSelect(interaction);
+      break;
+    case 'webhook_pick':
+      await handleWebhookPickSelect(interaction);
+      break;
     default:
       await interaction.reply({
         content: 'Action not available.',
@@ -144,6 +156,10 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
 async function handleChannelSelectMenu(interaction: ChannelSelectMenuInteraction): Promise<void> {
   const [action, op] = interaction.customId.split(':');
   logger.info(`ChannelSelect: ${action}:${op} by ${interaction.user.tag} -> ${interaction.values[0]}`);
+  if (action === 'webhook_add_channel') {
+    await handleWebhookChannelSelect(interaction);
+    return;
+  }
   if (action !== 'channel_pick') {
     await interaction.reply({ content: 'Action not available.', ephemeral: true });
     return;
@@ -165,6 +181,9 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
       break;
     case 'personality_set_modal':
       await handlePersonalitySetModal(interaction);
+      break;
+    case 'webhook_add_modal':
+      await handleWebhookAddModal(interaction);
       break;
     default:
       await interaction.reply({
