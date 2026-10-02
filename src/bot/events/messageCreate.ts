@@ -62,16 +62,40 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     const imageAttachment = message.attachments.find(
       (att) => att.contentType?.startsWith('image/') ?? false
     );
-    const bufferedContent =
-      isMentioned || isReplyToBot
-        ? message.content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim()
-        : message.content;
+    // Raw content has user mentions as numeric <@id> tokens, which the
+    // model can't read -- turn them into @names so it can tell who a
+    // message is aimed at. The bot's own mention is dropped (being
+    // addressed is tracked separately).
+    const nameFor = (id: string, fallback: string): string =>
+      message.guild?.members.cache.get(id)?.displayName ?? fallback;
+    let bufferedContent = message.content.replace(new RegExp(`<@!?${botId}>`, 'g'), '');
+    for (const user of message.mentions.users.values()) {
+      if (user.id === botId) continue;
+      bufferedContent = bufferedContent.replace(new RegExp(`<@!?${user.id}>`, 'g'), `@${nameFor(user.id, user.username)}`);
+    }
+    bufferedContent = bufferedContent.trim();
+
+    // Aimed at a specific other person: @-mentions someone else, or is a
+    // Discord reply to someone else's message. That's their exchange, not
+    // an opening for the bot to chat into.
+    let addressedTo: string | undefined;
+    if (!isMentioned && !isReplyToBot) {
+      const other = [...message.mentions.users.values()].find(
+        (u) => u.id !== botId && u.id !== message.author.id && !u.bot
+      );
+      if (other) {
+        addressedTo = nameFor(other.id, other.username);
+      } else if (repliedToMessage && repliedToMessage.author.id !== message.author.id && !repliedToMessage.author.bot) {
+        addressedTo = nameFor(repliedToMessage.author.id, repliedToMessage.author.username);
+      }
+    }
 
     recordAmbientMessage(message.channel.id, {
-      author: message.author.username,
+      author: nameFor(message.author.id, message.author.username),
       content: bufferedContent,
       hasImage: !!imageAttachment,
       ts: Date.now(),
+      addressedTo,
     });
 
     const reactFn = async (emoji: string): Promise<void> => {

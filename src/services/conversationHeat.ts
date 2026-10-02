@@ -12,6 +12,9 @@ export interface Entry {
   content: string;
   hasImage: boolean;
   ts: number;
+  // Set when the message @-mentions or replies to a specific other person
+  // (not the bot) -- it's their exchange, not an open invitation.
+  addressedTo?: string;
 }
 
 export interface LevelParams {
@@ -123,8 +126,14 @@ export function formatAgo(ts: number, now: number): string {
 }
 
 export function formatEntry(e: Entry, now: number): string {
-  const who = e.isBot ? 'you' : e.author;
+  const who = e.isBot ? 'you' : e.addressedTo ? `${e.author} → @${e.addressedTo}` : e.author;
   return `[${who}] (${formatAgo(e.ts, now)})${e.hasImage ? ' (sent an image)' : ''}: ${e.content}`;
+}
+
+// Every new message is aimed at some other specific person -- someone
+// else's exchange, not an opening for the bot to chat into.
+export function allAddressedElsewhere(fresh: Entry[]): boolean {
+  return fresh.length > 0 && fresh.every((e) => !!e.addressedTo);
 }
 
 // ── Signals ────────────────────────────────────────────────────────────────
@@ -218,8 +227,15 @@ export function shouldEngage(
   bonus: number,
   chatPenalty: number,
   jitter: number,
+  // Hard rule: casual chat never cuts into an exchange aimed at someone
+  // else unless the bot itself is being talked to. Answers/corrections and
+  // reactions are unaffected.
+  chatBlocked = false,
 ): Verdict {
   if (intent === 'none') return { engage: false, score: interest, threshold: null };
+  if (intent === 'chat' && chatBlocked && bonus === 0) {
+    return { engage: false, score: interest, threshold: null };
+  }
 
   if (intent === 'react') {
     const score = interest + momentum * 2 + jitter;

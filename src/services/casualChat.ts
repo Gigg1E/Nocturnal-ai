@@ -18,6 +18,7 @@ import {
   yieldPenalty,
   shouldEngage,
   randomJitter,
+  allAddressedElsewhere,
 } from './conversationHeat';
 
 // "Answer Machine" mode: a channel-scoped alternative to the normal
@@ -117,7 +118,7 @@ export function cancelPendingEngagement(channelId: string): void {
 
 export function recordAmbientMessage(
   channelId: string,
-  entry: { author: string; content: string; hasImage: boolean; ts: number }
+  entry: { author: string; content: string; hasImage: boolean; ts: number; addressedTo?: string }
 ): void {
   pushEntry(channelId, { ...entry, isBot: false });
   logger.debug(`Answer machine: buffered message in ${channelId} from ${entry.author}`);
@@ -183,7 +184,7 @@ interface Decision {
   emoji?: string;
 }
 
-const DECISION_PROMPT = `You're a regular member of a Discord group chat, reading along. Rate the NEW messages only — the EARLIER section is background you've already seen; never respond to it again, and don't let an emotional moment from EARLIER color a new, unrelated message. Lines marked [you] are things you already said — don't repeat them.
+const DECISION_PROMPT = `You're a regular member of a Discord group chat, reading along. Rate the NEW messages only — the EARLIER section is background you've already seen; never respond to it again, and don't let an emotional moment from EARLIER color a new, unrelated message. Lines marked [you] are things you already said — don't repeat them. A line marked [name → @other] is aimed at that other person (greeting them, replying to them) — it's their exchange, not an invitation for you; don't act like it was said to you.
 
 Pick ONE intent:
 - answer: someone asked a genuine, answerable question nobody has answered correctly yet
@@ -314,6 +315,7 @@ async function evaluateEngagement(
     bonus,
     yieldPenalty(snapshot, now, bonus),
     randomJitter(),
+    allAddressedElsewhere(fresh),
   );
   logger.info(
     `Answer machine ${channelId} heat=${heat}${immediate ? ' (direct)' : ''}: ` +
