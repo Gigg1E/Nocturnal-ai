@@ -219,6 +219,26 @@ export function imageBoost(standalone: number, interest: number): number {
   return IMAGE_MAX_BOOST * standalone * Math.max(0, Math.min(1, (interest - 3) / 7));
 }
 
+// A bare acknowledgement ("lol", "fr fr", "ok bet", an emoji) -- answering
+// every one of these with a full reply reads as the bot chasing the
+// conversation. Empty text (an image/GIF-only reply) counts too.
+const ACK_WORDS = new Set([
+  'lol', 'lmao', 'lmfao', 'lmaoo', 'lmaooo', 'haha', 'hahaha', 'ha', 'fr', 'frfr', 'ok', 'okay', 'k', 'kk',
+  'bet', 'true', 'facts', 'real', 'ye', 'yea', 'yeah', 'yep', 'yup', 'nah', 'no', 'ty', 'thx', 'thanks',
+  'nice', 'damn', 'dang', 'bruh', 'bro', 'word', 'same', 'mhm', 'hm', 'hmm', 'ight', 'aight', 'sure', 'cool', 'w', 'l',
+]);
+
+export function isAcknowledgement(text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .replace(/<a?:\w+:\d+>/g, ' ') // custom emoji
+    .replace(/[\p{Extended_Pictographic}‍️]/gu, ' ')
+    .replace(/[^\p{L}\p{N}'\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.length <= 3 && words.every((w) => ACK_WORDS.has(w));
+}
+
 // Every new message is aimed at some other specific person -- someone
 // else's exchange, not an opening for the bot to chat into.
 export function allAddressedElsewhere(fresh: Entry[]): boolean {

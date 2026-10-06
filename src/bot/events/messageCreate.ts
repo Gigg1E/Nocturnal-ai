@@ -4,6 +4,7 @@ import { isUserBlacklisted, isChannelAllowed, isCasualChatChannel } from '../../
 import { processMessage, processReply } from '../../services/chat';
 import { recordAmbientMessage, scheduleEngagementCheck, evaluateNow } from '../../services/casualChat';
 import { formatToolArgs } from '../../ollama/tools';
+import { isAcknowledgement } from '../../services/conversationHeat';
 
 type SendableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
@@ -128,8 +129,17 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 
     const botName = message.client.user?.username ?? '';
 
+    // Someone talking to the bot directly gets an answer, like the normal
+    // chat pipeline would give: a typed @mention always, a Discord reply to
+    // the bot unless it's a bare "lol"/"fr"/emoji (that goes through the
+    // normal decision, where a reaction usually fits). mentions.has() isn't
+    // used here -- it also matches @everyone, role pings and the automatic
+    // ping a Discord reply carries.
+    const typedMention = new RegExp(`<@!?${botId}>`).test(message.content);
+    const forceReply = typedMention || (isReplyToBot && !isAcknowledgement(bufferedContent));
+
     if (isMentioned || isReplyToBot) {
-      await evaluateNow(message.channel.id, guildId, message.channel, botName);
+      await evaluateNow(message.channel.id, guildId, message.channel, botName, forceReply ? message.author.id : null);
     } else {
       scheduleEngagementCheck(message.channel.id, guildId, message.channel, botName);
     }
