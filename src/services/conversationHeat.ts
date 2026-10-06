@@ -297,6 +297,25 @@ export function fairShareExceeded(entries: Entry[]): boolean {
   return bot / last.length > cap;
 }
 
+// Someone the bot has been trading lines with is writing again (not aimed at
+// someone else). Fair share exists so the bot doesn't take over a group
+// chat -- not to cut off a person who's actually talking to it, so this
+// exempts them. "Partners" are whoever the bot's recent messages followed.
+export function partnerContinuing(entries: Entry[], fresh: Entry[]): boolean {
+  const recent = entries.slice(-12);
+  const partners = new Set<string>();
+  let lastBotIdx = -1;
+  recent.forEach((e, i) => {
+    if (!e.isBot) return;
+    lastBotIdx = i;
+    const before = recent.slice(0, i).reverse().find((x) => !x.isBot);
+    if (before && !before.addressedTo) partners.add(before.author);
+  });
+  if (lastBotIdx < 0) return false;
+  const after = recent.slice(lastBotIdx + 1);
+  return fresh.some((e) => after.includes(e) && !e.addressedTo && partners.has(e.author));
+}
+
 // Two or more people rapid-firing at each other, not involving the bot:
 // make casual chat harder to break into (answers/corrections unaffected).
 export function yieldPenalty(entries: Entry[], now: number, bonus: number): number {

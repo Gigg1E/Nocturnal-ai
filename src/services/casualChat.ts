@@ -15,6 +15,7 @@ import {
   conversationSignals,
   bonusTotal,
   fairShareExceeded,
+  partnerContinuing,
   yieldPenalty,
   shouldEngage,
   randomJitter,
@@ -74,6 +75,11 @@ interface ChannelState {
   lastEvaluatedTs: number;
   debounceTimer: NodeJS.Timeout | null;
   burstStartedAt: number | null;
+  // One evaluation per channel at a time. Messages that land while a reply
+  // is being written get looked at right after it's sent (with that reply
+  // in view) instead of racing it into a double post.
+  busy: boolean;
+  rerun: { immediate: boolean } | null;
 }
 
 const channelStates = new Map<string, ChannelState>();
@@ -88,6 +94,8 @@ function getState(channelId: string): ChannelState {
       lastEvaluatedTs: 0,
       debounceTimer: null,
       burstStartedAt: null,
+      busy: false,
+      rerun: null,
     };
     channelStates.set(channelId, state);
   }
@@ -103,6 +111,50 @@ function pushEntry(channelId: string, entry: Entry): void {
   }
   state.buffer.push(entry);
   state.buffer = trimOverflow(state.buffer);
+}
+
+// The bot's reply answers what it saw (the snapshot), so it goes right after
+// the snapshot's last line -- messages that arrived while it was writing
+// come after it, and get their own look on the rerun.
+function insertBotEntry(channelId: string, after: Entry, entry: Entry): void {
+  const state = getState(channelId);
+  const idx = state.buffer.indexOf(after);
+  if (idx < 0) {
+    pushEntry(channelId, entry);
+    return;
+  }
+  state.buffer.splice(idx + 1, 0, entry);
+  state.buffer = trimOverflow(state.buffer);
+}
+
+async function runEngagement(
+  channelId: string,
+  guildId: string,
+  channel: SendableChannel,
+  immediate: boolean,
+  botName: string
+): Promise<void> {
+  const state = getState(channelId);
+  if (state.busy) {
+    state.rerun = { immediate: immediate || (state.rerun?.immediate ?? false) };
+    return;
+  }
+  state.busy = true;
+  try {
+    let imm = immediate;
+    for (;;) {
+      try {
+        await evaluateEngagement(channelId, guildId, channel, imm, botName);
+      } catch (err) {
+        logger.warn('Answer machine check failed:', err);
+      }
+      if (!state.rerun) break;
+      imm = state.rerun.immediate;
+      state.rerun = null;
+    }
+  } finally {
+    state.busy = false;
+  }
 }
 
 // Called when a message directly addresses the bot (mention/reply) -- that's
@@ -157,9 +209,7 @@ export function scheduleEngagementCheck(
   state.debounceTimer = setTimeout(() => {
     state.debounceTimer = null;
     state.burstStartedAt = null;
-    evaluateEngagement(channelId, guildId, channel, false, botName).catch((err) => {
-      logger.warn('Answer machine ambient check failed:', err);
-    });
+    void runEngagement(channelId, guildId, channel, false, botName);
   }, delay);
 }
 
@@ -177,7 +227,7 @@ export async function evaluateNow(
   botName: string
 ): Promise<void> {
   cancelPendingEngagement(channelId);
-  await evaluateEngagement(channelId, guildId, channel, true, botName);
+  await runEngagement(channelId, guildId, channel, true, botName);
 }
 
 interface Decision {
@@ -340,7 +390,9 @@ async function evaluateEngagement(
   const earlier = snapshot.filter((e) => !fresh.includes(e));
   // Advance regardless of outcome -- anything arriving during the model
   // call stays "new" for the next look.
-  state.lastEvaluatedTs = snapshot[snapshot.length - 1].ts;
+  // (max, not last: a bot reply is inserted before messages that arrived
+  // while it was being written, so the buffer isn't strictly time-ordered.)
+  state.lastEvaluatedTs = Math.max(...snapshot.map((e) => e.ts));
 
   const guildConfig = loadGuildConfig(guildId);
   const heat = resolveHeat(guildConfig);
@@ -350,11 +402,15 @@ async function evaluateEngagement(
   const bonus = bonusTotal(signals);
   const momentum = computeMomentum(snapshot, now);
 
-  const replyAllowed = (immediate || signals.inConversation || now - state.lastBotReplyAt >= p.replyCooldownMs)
-    && (immediate || !fairShareExceeded(snapshot));
-  const reactAllowed = immediate || now - state.lastReactAt >= p.reactCooldownMs;
-  if (!replyAllowed && !reactAllowed) {
-    logger.debug(`Answer machine: ${channelId} gated (cooldown/fair-share)`);
+  // Why a reply would be blocked, if it is (null = allowed). The person the
+  // bot is trading lines with doesn't count against fair share.
+  const replyBlock = immediate ? null
+    : !signals.inConversation && now - state.lastBotReplyAt < p.replyCooldownMs ? 'cooldown'
+    : fairShareExceeded(snapshot) && !(signals.inConversation && partnerContinuing(snapshot, fresh)) ? 'fair-share'
+    : null;
+  const reactBlock = immediate || now - state.lastReactAt >= p.reactCooldownMs ? null : 'react cooldown';
+  if (replyBlock && reactBlock) {
+    logger.debug(`Answer machine: ${channelId} gated (${replyBlock}, ${reactBlock})`);
     return;
   }
 
@@ -377,32 +433,35 @@ async function evaluateEngagement(
     allAddressedElsewhere(fresh),
     imgBoost,
   );
+  // An engage verdict can still be stopped by a gate or a missing emoji/
+  // target -- log that as a skip with the reason, not as ENGAGE.
+  const targetEntry = (decision.target && fresh[decision.target - 1]) || fresh[fresh.length - 1];
+  const blockedBy = !verdict.engage ? null
+    : decision.intent === 'react'
+      ? reactBlock ?? (!decision.emoji ? 'no emoji' : !targetEntry.messageId ? 'no target' : null)
+      : replyBlock;
+  const outcome = !verdict.engage ? 'skip' : blockedBy ? `skip (${blockedBy})` : 'ENGAGE';
   logger.info(
     `Answer machine ${channelId} heat=${heat}${immediate ? ' (direct)' : ''}: ` +
     `intent=${decision.intent} interest=${decision.interest} bonus=${bonus} momentum=${momentum.toFixed(2)} ` +
     (images.length ? `images=${images.length} standalone=${standalone.toFixed(2)} imgBoost=${imgBoost.toFixed(1)} ` : '') +
     `score=${verdict.score.toFixed(1)} threshold=${verdict.threshold === null ? 'n/a' : verdict.threshold.toFixed(1)} ` +
-    `→ ${verdict.engage ? 'ENGAGE' : 'skip'}${decision.emoji ? ' ' + decision.emoji : ''}`
+    `→ ${outcome}${decision.emoji ? ' ' + decision.emoji : ''}`
   );
-  if (!verdict.engage) return;
+  if (outcome !== 'ENGAGE') return;
 
   if (decision.intent === 'react') {
-    if (!reactAllowed || !decision.emoji) return;
     // React on the message the model named, not just the latest one --
     // a 💀 for a picture belongs on the picture.
-    const targetEntry = (decision.target && fresh[decision.target - 1]) || fresh[fresh.length - 1];
-    if (!targetEntry.messageId) return;
     try {
-      const target = await channel.messages.fetch(targetEntry.messageId);
-      await target.react(decision.emoji);
+      const target = await channel.messages.fetch(targetEntry.messageId!);
+      await target.react(decision.emoji!);
       state.lastReactAt = now;
     } catch (err) {
       logger.debug('Answer machine reaction failed (non-fatal):', err);
     }
     return;
   }
-
-  if (!replyAllowed) return;
 
   const typingInterval = setInterval(() => {
     channel.sendTyping().catch(() => {});
@@ -443,8 +502,10 @@ async function evaluateEngagement(
       } else {
         await channel.send(trimmed);
       }
-      pushEntry(channelId, { author: 'you', isBot: true, content: aiContent, ts: Date.now() });
+      insertBotEntry(channelId, snapshot[snapshot.length - 1], { author: 'you', isBot: true, content: aiContent, ts: Date.now() });
       state.lastBotReplyAt = Date.now();
+    } else {
+      logger.warn(`Answer machine ${channelId}: reply model returned nothing`);
     }
   } catch (err) {
     clearInterval(typingInterval);
