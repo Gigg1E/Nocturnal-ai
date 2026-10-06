@@ -10,10 +10,12 @@ import {
 import { logger } from '../utils/logger';
 import { handleMessageCreate } from './events/messageCreate';
 import { handleMessageUpdate } from './events/messageUpdate';
+import { handleReactionAdd, handleReactionRemove, handleMessageDelete } from './events/reactions';
 import { handleInteractionCreate } from './events/interactionCreate';
 import { handleGuildCreate } from './events/guildCreate';
 import { commands, registerCommands } from './commands';
 import { isAllowed } from '../utils/guildAllowlist';
+import { startStatusWatcher } from '../utils/botStatus';
 
 export interface BotClient extends Client {
   commands: Collection<string, unknown>;
@@ -27,6 +29,8 @@ export function createClient(): BotClient {
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMembers,
+      // Answer Machine sees reactions as context (non-privileged intent).
+      GatewayIntentBits.GuildMessageReactions,
     ],
     partials: [
       Partials.Message,
@@ -45,6 +49,7 @@ export function createClient(): BotClient {
   // Register event handlers
   client.once(Events.ClientReady, async (readyClient) => {
     logger.info(`Nocturnal is online as ${readyClient.user.tag}`);
+    startStatusWatcher(readyClient);
 
     // Reconcile against the allowlist on startup — guildCreate only catches a
     // guild being de-listed going forward (on new joins), not a guild the bot
@@ -78,6 +83,15 @@ export function createClient(): BotClient {
   client.on(Events.MessageCreate, handleMessageCreate);
   client.on(Events.MessageUpdate, (oldMsg, newMsg) => {
     handleMessageUpdate(oldMsg, newMsg).catch((err) => logger.debug('messageUpdate handler failed:', err));
+  });
+  client.on(Events.MessageReactionAdd, (r, u) => {
+    handleReactionAdd(r, u).catch((err) => logger.debug('reactionAdd handler failed:', err));
+  });
+  client.on(Events.MessageReactionRemove, (r, u) => {
+    handleReactionRemove(r, u).catch((err) => logger.debug('reactionRemove handler failed:', err));
+  });
+  client.on(Events.MessageDelete, (m) => {
+    handleMessageDelete(m).catch((err) => logger.debug('messageDelete handler failed:', err));
   });
   client.on(Events.InteractionCreate, handleInteractionCreate);
 

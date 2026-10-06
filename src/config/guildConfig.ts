@@ -42,6 +42,9 @@ export interface GuildConfig {
     // Admin-facing "Heat" preset. 'custom' uses customHeat (0-100) instead.
     chattiness: HeatPreset;
     customHeat: number;
+    // Lets the Answer Machine send GIFs (Klipy search) and this server's
+    // stickers. Off by default -- not every server wants that.
+    media: boolean;
   };
 }
 
@@ -100,6 +103,7 @@ export const DEFAULT_GUILD_CONFIG: GuildConfig = {
     channels: [],
     chattiness: 'medium',
     customHeat: 50,
+    media: false,
   },
 };
 
@@ -226,6 +230,12 @@ export function setCasualChattiness(guildId: string, chattiness: HeatPreset, cus
   const config = loadGuildConfig(guildId);
   config.casualChat.chattiness = chattiness;
   if (customHeat !== undefined) config.casualChat.customHeat = customHeat;
+  saveGuildConfig(guildId, config);
+}
+
+export function setCasualMedia(guildId: string, enabled: boolean): void {
+  const config = loadGuildConfig(guildId);
+  config.casualChat.media = enabled;
   saveGuildConfig(guildId, config);
 }
 

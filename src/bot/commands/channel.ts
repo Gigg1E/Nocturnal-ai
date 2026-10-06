@@ -50,6 +50,10 @@ export const channelCommand: Command = {
         {
           name: 'Answer Machine heat',
           value: `${HEAT_PRESET_LABELS[config.casualChat.chattiness] ?? config.casualChat.chattiness} (${resolveHeat(config)})`,
+        },
+        {
+          name: 'Answer Machine GIFs & stickers',
+          value: config.casualChat.media ? 'On' : 'Off',
         }
       )
       .setFooter({ text: 'Blocked always overrides allowed/Answer Machine for that channel. Answer Machine channels never use the regular chat-bot pipeline, even when mentioned.' });
@@ -65,6 +69,11 @@ export const channelCommand: Command = {
         { label: 'Enable Answer Machine', value: 'casual_enable', description: 'Answers genuine questions & corrects misinformation here' },
         { label: 'Disable Answer Machine', value: 'casual_disable', description: 'Remove from the Answer Machine' },
         { label: 'Set Answer Machine heat', value: 'chattiness', description: 'How much it talks (TalksALot joins casual chat)' },
+        {
+          label: config.casualChat.media ? 'Turn off GIFs & stickers' : 'Turn on GIFs & stickers',
+          value: 'media_toggle',
+          description: 'Whether the Answer Machine can send GIFs and this server\'s stickers',
+        },
         { label: 'Reset everything', value: 'reset', description: 'Clear all channel restrictions and the Answer Machine' }
       );
 

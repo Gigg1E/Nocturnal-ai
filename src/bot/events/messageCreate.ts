@@ -1,10 +1,10 @@
-import { Message, AttachmentBuilder, EmbedBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
+import { Message, StickerFormatType, AttachmentBuilder, EmbedBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { logger, logRateLimit } from '../../utils/logger';
 import { isUserBlacklisted, isChannelAllowed, isCasualChatChannel } from '../../config/guildConfig';
 import { processMessage, processReply } from '../../services/chat';
 import { recordAmbientMessage, scheduleEngagementCheck, evaluateNow } from '../../services/casualChat';
 import { formatToolArgs } from '../../ollama/tools';
-import { isAcknowledgement } from '../../services/conversationHeat';
+import { isAcknowledgement, ImageRef } from '../../services/conversationHeat';
 
 type SendableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
@@ -36,14 +36,37 @@ function randomThinkingPhrase(): string {
 
 const MAX_IMAGE_DIM = 1280;
 
-// Pictures in a message for the Answer Machine: image attachments, plus
-// link previews that are themselves an image or GIF (Tenor/GIPHY, pasted
-// image links) -- not article/video thumbnails. Big attachments are fetched
-// through Discord's media proxy at a smaller size.
-export function messageImageUrls(message: Message): string[] {
-  const urls: string[] = [];
+// "black-guy-in-suit-black-guy-suit" / "risitas-cunao-gif-1234567" -> a
+// readable title hint. It's the uploader's tag, so the prompt labels it as
+// possibly not matching how the GIF is being used.
+function gifTitleFromUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    // Klipy slugs can carry an app suffix ("side-eye--k1a5GTEAE") -- drop it.
+    const slug = (new URL(url).pathname.split('/').filter(Boolean).pop() ?? '').replace(/--\w+$/, '');
+    const words = slug.replace(/[-_]+/g, ' ').replace(/\bgif\b/gi, ' ').replace(/\b\d{4,}\b/g, ' ').replace(/\s+/g, ' ').trim();
+    return words || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Everything visual or linked in a message, for the Answer Machine:
+//  - image attachments (big ones fetched through Discord's media proxy at a
+//    smaller size); GIF attachments keep their animated source,
+//  - link previews that are themselves an image or GIF (Tenor/GIPHY/Klipy,
+//    pasted image links) -- GIFs keep the mp4/gif to sample frames from,
+//  - stickers (except Lottie ones, which aren't images -- named instead),
+//  - other link previews (YouTube, articles) as text only: "YouTube: title".
+export function messagePreviews(message: Message): { images: ImageRef[]; links: string[] } {
+  const images: ImageRef[] = [];
+  const links: string[] = [];
   for (const att of message.attachments.values()) {
     if (!att.contentType?.startsWith('image/')) continue;
+    if (att.contentType === 'image/gif') {
+      images.push({ url: att.url, kind: 'gif', video: att.url });
+      continue;
+    }
     let url = att.url;
     if (att.width && att.height && Math.max(att.width, att.height) > MAX_IMAGE_DIM) {
       const scale = MAX_IMAGE_DIM / Math.max(att.width, att.height);
@@ -52,15 +75,29 @@ export function messageImageUrls(message: Message): string[] {
       u.searchParams.set('height', String(Math.round(att.height * scale)));
       url = u.toString();
     }
-    urls.push(url);
+    images.push({ url, kind: 'image' });
   }
   for (const embed of message.embeds) {
-    if (embed.data.type !== 'image' && embed.data.type !== 'gifv') continue;
-    const img = embed.image ?? embed.thumbnail;
-    const url = img?.proxyURL ?? img?.url;
-    if (url) urls.push(url);
+    const type = embed.data.type;
+    if (type === 'gifv') {
+      const still = embed.thumbnail?.proxyURL ?? embed.thumbnail?.url;
+      const video = embed.video?.proxyURL ?? embed.video?.url;
+      if (still || video) {
+        images.push({ url: still ?? video!, kind: 'gif', video, title: gifTitleFromUrl(embed.url ?? undefined) });
+      }
+    } else if (type === 'image') {
+      const img = embed.image ?? embed.thumbnail;
+      const url = img?.proxyURL ?? img?.url;
+      if (url) images.push(/\.gif(\?|$)/i.test(url) ? { url, kind: 'gif', video: url } : { url, kind: 'image' });
+    } else if (embed.title) {
+      links.push(`${embed.provider?.name ? `${embed.provider.name}: ` : ''}${embed.title}`);
+    }
   }
-  return urls;
+  for (const sticker of message.stickers.values()) {
+    if (sticker.format === StickerFormatType.Lottie) links.push(`sticker "${sticker.name}"`);
+    else images.push({ url: sticker.url, kind: 'sticker', title: sticker.name });
+  }
+  return { images, links };
 }
 
 export async function handleMessageCreate(message: Message): Promise<void> {
@@ -117,14 +154,26 @@ export async function handleMessageCreate(message: Message): Promise<void> {
       }
     }
 
+    // Which message this replies to, with a short quote -- matters most
+    // when it's answering something from a while back, not the line above.
+    const replyTo = repliedToMessage
+      ? {
+          author: isReplyToBot ? 'you' : nameFor(repliedToMessage.author.id, repliedToMessage.author.username),
+          snippet:
+            repliedToMessage.content.replace(/<@!?\d+>/g, '@someone').trim() ||
+            (repliedToMessage.attachments.size || repliedToMessage.embeds.length ? '(image/GIF)' : '(message)'),
+        }
+      : undefined;
+
     recordAmbientMessage(message.channel.id, {
       author: nameFor(message.author.id, message.author.username),
       content: bufferedContent,
-      images: messageImageUrls(message),
+      ...messagePreviews(message),
       ts: Date.now(),
       addressedTo,
       messageId: message.id,
       replyToId: message.reference?.messageId,
+      replyTo,
     });
 
     const botName = message.client.user?.username ?? '';
@@ -139,7 +188,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     const forceReply = typedMention || (isReplyToBot && !isAcknowledgement(bufferedContent));
 
     if (isMentioned || isReplyToBot) {
-      await evaluateNow(message.channel.id, guildId, message.channel, botName, forceReply ? message.author.id : null);
+      await evaluateNow(message.channel.id, guildId, message.channel, botName, forceReply ? { userId: message.author.id, messageId: message.id } : null);
     } else {
       scheduleEngagementCheck(message.channel.id, guildId, message.channel, botName);
     }

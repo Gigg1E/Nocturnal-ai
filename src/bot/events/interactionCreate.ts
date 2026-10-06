@@ -38,6 +38,7 @@ import {
   addCasualChannel,
   removeCasualChannel,
   setCasualChattiness,
+  setCasualMedia,
   loadGuildConfig,
   saveGuildConfig,
   resolveHeat,
@@ -325,6 +326,17 @@ async function handleChannelActionSelect(interaction: StringSelectMenuInteractio
     config.casualChat.channels = [];
     saveGuildConfig(guildId, config);
     await interaction.update({ content: 'All channel restrictions and Answer Machine channels have been reset.', embeds: [], components: [] });
+    return;
+  }
+
+  if (choice === 'media_toggle') {
+    const enabled = !loadGuildConfig(guildId).casualChat.media;
+    setCasualMedia(guildId, enabled);
+    await interaction.update({
+      content: `Answer Machine GIFs & stickers are now **${enabled ? 'on' : 'off'}**.`,
+      embeds: [],
+      components: [],
+    });
     return;
   }
 

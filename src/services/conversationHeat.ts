@@ -10,9 +10,10 @@ export interface Entry {
   author: string;
   isBot: boolean;
   content: string;
-  // Image URLs (attachments + link-preview images/GIFs). Kept for the life
-  // of the session so a later "look at his face" can refer back to one.
-  images?: string[];
+  // Pictures in the message (attachments, link-preview images/GIFs,
+  // stickers). Kept for the life of the session so a later "look at his
+  // face" can refer back to one.
+  images?: ImageRef[];
   ts: number;
   // Set when the message @-mentions or replies to a specific other person
   // (not the bot) -- it's their exchange, not an open invitation.
@@ -20,6 +21,25 @@ export interface Entry {
   messageId?: string;
   // Discord message this one is a reply to (any author).
   replyToId?: string;
+  // Who/what it replies to, shown as `[Rixo ↩ you: "scared of what?…"]`.
+  // author is 'you' when replying to the bot.
+  replyTo?: { author: string; snippet: string };
+  // Emoji (display form, e.g. "😂" or ":kek:") -> display names of who
+  // reacted ("you" for the bot). Background context only -- reactions never
+  // trigger an evaluation by themselves.
+  reactions?: Record<string, string[]>;
+  // Link-preview text for non-image links ("YouTube: Some Video Title").
+  links?: string[];
+}
+
+export interface ImageRef {
+  // A still to fall back on (attachment, or a GIF's preview frame).
+  url: string;
+  kind: 'image' | 'gif' | 'sticker';
+  // For GIFs: the animated source (mp4/gif) to sample several frames from.
+  video?: string;
+  // GIF uploader's title/slug or sticker name -- a hint, not the truth.
+  title?: string;
 }
 
 export interface LevelParams {
@@ -135,7 +155,36 @@ export function formatAgo(ts: number, now: number): string {
 // line or a section header inside their own message (or display name), so
 // both are neutralized before anything is buffered.
 export function sanitizeText(s: string): string {
-  return s.replace(/\s*[\r\n]+\s*/g, ' / ').replace(/\[/g, '(').replace(/\]/g, ')');
+  return s
+    .replace(/<a?:(\w+):\d+>/g, ':$1:') // custom emoji -> readable :name:
+    .replace(/\s*[\r\n]+\s*/g, ' / ')
+    .replace(/\[/g, '(')
+    .replace(/\]/g, ')')
+    .replace(/[{}]/g, '');
+}
+
+export function snippet(s: string, max = 50): string {
+  const t = sanitizeText(s).replace(/"/g, "'").trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+const MAX_REACTORS_SHOWN = 3;
+
+function formatReactions(r: Record<string, string[]> | undefined): string {
+  if (!r) return '';
+  const parts = Object.entries(r)
+    .filter(([, who]) => who.length)
+    .map(([emoji, who]) => {
+      const names = who.slice(0, MAX_REACTORS_SHOWN).join(', ') + (who.length > MAX_REACTORS_SHOWN ? ', …' : '');
+      return `${emoji}×${who.length}: ${names}`;
+    });
+  return parts.length ? ` {reactions ${parts.join('; ')}}` : '';
+}
+
+function unseenImageNote(images: ImageRef[]): string {
+  const sticker = images.find((i) => i.kind === 'sticker');
+  if (sticker) return ` (sent a sticker${sticker.title ? ` "${sticker.title}"` : ''})`;
+  return images.some((i) => i.kind === 'gif') ? ' (sent a GIF)' : ' (sent an image)';
 }
 
 export function sanitizeName(s: string): string {
@@ -146,9 +195,25 @@ export function sanitizeName(s: string): string {
 // An entry with images but no tag gets a plain "(sent an image)" -- the
 // model can't see it this time and shouldn't guess what's in it.
 export function formatEntry(e: Entry, now: number, imageTag?: string): string {
-  const who = e.isBot ? 'you' : e.addressedTo ? `${e.author} → @${e.addressedTo}` : e.author;
-  const img = imageTag ? ` [${imageTag}]` : e.images?.length ? ' (sent an image)' : '';
-  return `[${who}] (${formatAgo(e.ts, now)})${img}: ${e.content}`;
+  const who = e.isBot
+    ? 'you'
+    : e.replyTo
+      ? `${e.author} ↩ ${e.replyTo.author}: "${e.replyTo.snippet}"`
+      : e.addressedTo
+        ? `${e.author} → @${e.addressedTo}`
+        : e.author;
+  const img = imageTag ? ` [${imageTag}]` : e.images?.length ? unseenImageNote(e.images) : '';
+  const links = e.links?.length ? ` (link preview: ${e.links.map((l) => `"${l}"`).join(', ')})` : '';
+  return `[${who}] (${formatAgo(e.ts, now)})${img}: ${e.content}${links}${formatReactions(e.reactions)}`;
+}
+
+// Label for an image the model is actually shown: "image 1", plus what kind
+// it is and the uploader's title as an explicitly untrusted hint.
+export function imageLabel(n: number, ref: ImageRef, frames: number): string {
+  if (ref.kind === 'sticker') return `image ${n}: sticker${ref.title ? ` "${ref.title}"` : ''}`;
+  if (ref.kind !== 'gif') return `image ${n}`;
+  const how = frames > 1 ? `GIF, ${frames} frames left-to-right top-to-bottom` : 'GIF, one frame';
+  return `image ${n}: ${how}${ref.title ? `, uploader's title "${ref.title}" (may not match how it's used)` : ''}`;
 }
 
 // ── Images ─────────────────────────────────────────────────────────────────
@@ -160,7 +225,7 @@ const LOOKBACK_RE = /\b(that|this|the|his|her|their|ur|your)\s+(pic|pics|picture
 
 export interface SelectedImage {
   entry: Entry;
-  url: string;
+  ref: ImageRef;
 }
 
 // Which pictures the model actually gets to look at this time, oldest
@@ -172,16 +237,16 @@ export interface SelectedImage {
 // Anything else stays a text-only "(sent an image)".
 export function selectImages(snapshot: Entry[], fresh: Entry[]): SelectedImage[] {
   const picked: SelectedImage[] = [];
-  const add = (entry: Entry, url: string): void => {
-    if (picked.length < MAX_IMAGES && !picked.some((p) => p.url === url)) picked.push({ entry, url });
+  const add = (entry: Entry, ref: ImageRef): void => {
+    if (picked.length < MAX_IMAGES && !picked.some((p) => p.ref.url === ref.url)) picked.push({ entry, ref });
   };
 
-  for (const e of [...fresh].reverse()) for (const url of e.images ?? []) add(e, url);
+  for (const e of [...fresh].reverse()) for (const ref of e.images ?? []) add(e, ref);
 
   for (const e of fresh) {
     if (!e.replyToId) continue;
     const target = snapshot.find((s) => s.messageId === e.replyToId);
-    for (const url of target?.images ?? []) add(target!, url);
+    for (const ref of target?.images ?? []) add(target!, ref);
   }
 
   if (!fresh.some((e) => e.images?.length) && fresh.some((e) => LOOKBACK_RE.test(e.content))) {
