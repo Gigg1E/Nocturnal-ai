@@ -33,6 +33,10 @@ export function createClient(): BotClient {
       Partials.Channel,
       Partials.Reaction,
     ],
+    // Model output must never mass-ping: no @everyone/@here or role pings
+    // even if someone talks the model into writing one. Applies to every
+    // send/edit that doesn't set its own allowedMentions.
+    allowedMentions: { parse: ['users'], repliedUser: false },
   }) as BotClient;
 
   // Initialize commands collection

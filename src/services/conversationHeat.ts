@@ -130,6 +130,18 @@ export function formatAgo(ts: number, now: number): string {
   return `${Math.max(1, Math.round(secs / 60))}m ago`;
 }
 
+// Chat text goes into the transcript as one line per message. Line breaks
+// and square brackets would let someone forge a "[you] (just now): ..."
+// line or a section header inside their own message (or display name), so
+// both are neutralized before anything is buffered.
+export function sanitizeText(s: string): string {
+  return s.replace(/\s*[\r\n]+\s*/g, ' / ').replace(/\[/g, '(').replace(/\]/g, ')');
+}
+
+export function sanitizeName(s: string): string {
+  return sanitizeText(s).replace(/[():→@]/g, '').trim().slice(0, 32) || 'someone';
+}
+
 // imageTag: which attached picture(s) this line's image(s) are ("image 1").
 // An entry with images but no tag gets a plain "(sent an image)" -- the
 // model can't see it this time and shouldn't guess what's in it.
