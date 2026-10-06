@@ -400,9 +400,10 @@ async function fetchImage(url: string): Promise<string | null> {
 // ("image 1", "image 2" -- matching their order in the images array). A
 // failed download just falls back to the plain "(sent an image)" line.
 async function loadOne(ref: ImageRef): Promise<{ b64: string; frames: number } | null> {
-  if (ref.kind === 'gif' && ref.video) {
+  if ((ref.kind === 'gif' || ref.kind === 'video') && ref.video) {
     const grid = await gifFrameGrid(ref.video);
     if (grid) return grid;
+    if (ref.kind === 'video') return null; // an mp4 isn't an image -- no still to fall back on
   }
   const b64 = await fetchImage(ref.url);
   return b64 ? { b64, frames: 1 } : null;

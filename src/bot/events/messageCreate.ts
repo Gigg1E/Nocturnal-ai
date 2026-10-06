@@ -35,6 +35,7 @@ function randomThinkingPhrase(): string {
 }
 
 const MAX_IMAGE_DIM = 1280;
+const MAX_VIDEO_BYTES = 15 * 1024 * 1024;
 
 // "black-guy-in-suit-black-guy-suit" / "risitas-cunao-gif-1234567" -> a
 // readable title hint. It's the uploader's tag, so the prompt labels it as
@@ -62,6 +63,12 @@ export function messagePreviews(message: Message): { images: ImageRef[]; links: 
   const images: ImageRef[] = [];
   const links: string[] = [];
   for (const att of message.attachments.values()) {
+    // Short video clips: sampled as frames like a GIF (no audio). Big ones
+    // are skipped -- gifFrameGrid won't download past its size cap anyway.
+    if (att.contentType?.startsWith('video/')) {
+      if (att.size <= MAX_VIDEO_BYTES) images.push({ url: att.url, kind: 'video', video: att.url });
+      continue;
+    }
     if (!att.contentType?.startsWith('image/')) continue;
     if (att.contentType === 'image/gif') {
       images.push({ url: att.url, kind: 'gif', video: att.url });

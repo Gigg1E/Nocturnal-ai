@@ -35,8 +35,9 @@ export interface Entry {
 export interface ImageRef {
   // A still to fall back on (attachment, or a GIF's preview frame).
   url: string;
-  kind: 'image' | 'gif' | 'sticker';
-  // For GIFs: the animated source (mp4/gif) to sample several frames from.
+  kind: 'image' | 'gif' | 'sticker' | 'video';
+  // For GIFs and video clips: the animated source (mp4/gif) to sample
+  // several frames from. Video has no usable still -- frames or nothing.
   video?: string;
   // GIF uploader's title/slug or sticker name -- a hint, not the truth.
   title?: string;
@@ -184,6 +185,7 @@ function formatReactions(r: Record<string, string[]> | undefined): string {
 function unseenImageNote(images: ImageRef[]): string {
   const sticker = images.find((i) => i.kind === 'sticker');
   if (sticker) return ` (sent a sticker${sticker.title ? ` "${sticker.title}"` : ''})`;
+  if (images.some((i) => i.kind === 'video')) return ' (sent a video)';
   return images.some((i) => i.kind === 'gif') ? ' (sent a GIF)' : ' (sent an image)';
 }
 
@@ -211,6 +213,7 @@ export function formatEntry(e: Entry, now: number, imageTag?: string): string {
 // it is and the uploader's title as an explicitly untrusted hint.
 export function imageLabel(n: number, ref: ImageRef, frames: number): string {
   if (ref.kind === 'sticker') return `image ${n}: sticker${ref.title ? ` "${ref.title}"` : ''}`;
+  if (ref.kind === 'video') return `image ${n}: video clip, ${frames} frames left-to-right top-to-bottom (no sound)`;
   if (ref.kind !== 'gif') return `image ${n}`;
   const how = frames > 1 ? `GIF, ${frames} frames left-to-right top-to-bottom` : 'GIF, one frame';
   return `image ${n}: ${how}${ref.title ? `, uploader's title "${ref.title}" (may not match how it's used)` : ''}`;
@@ -221,7 +224,7 @@ export function imageLabel(n: number, ref: ImageRef, frames: number): string {
 export const MAX_IMAGES = 3;
 
 // A new message pointing back at an earlier picture without replying to it.
-const LOOKBACK_RE = /\b(that|this|the|his|her|their|ur|your)\s+(pic|pics|picture|image|photo|meme|gif|screenshot|ss|face|fit|outfit)\b|\blook(ing)? at\b|\bwhat (is|was) (this|that)\b/i;
+const LOOKBACK_RE = /\b(that|this|the|his|her|their|ur|your)\s+(pic|pics|picture|image|photo|meme|gif|screenshot|ss|face|fit|outfit|video|vid|clip)\b|\blook(ing)? at\b|\bwhat (is|was) (this|that)\b/i;
 
 export interface SelectedImage {
   entry: Entry;
