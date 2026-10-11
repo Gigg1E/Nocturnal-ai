@@ -18,6 +18,19 @@ export interface ToolEndpointStatus {
   error?: string;
 }
 
+// ==================== TOOL GUIDANCE ====================
+// Appended to the system prompt (chat-bot and Answer Machine) whenever
+// tools are on. No date is injected into the prompt on purpose: the model
+// decides per message whether "now" matters and checks the time itself --
+// the goal is relevant data when it helps, not a lookup on every message.
+
+export const TOOL_GUIDANCE = `You have live tools: search_web, get_weather, get_current_time / get_timezone, geocode_location / reverse_geocode, and crypto_price. You don't automatically know today's date or what's going on right now -- what you know on your own is from the past. For each message, decide for yourself whether fresh data would make your reply right or more relevant:
+- If the answer depends on right now (today's weather, a current price, news, scores, releases, "today", "tonight", "this week"), look it up. When timing matters, check the current time too, so you know what "today" or "last night" means and whether search results are actually recent.
+- If it's about a time relative to now ("a week ago", "last month", "how long until..."), get the current time and work from it.
+- If it's just conversation ("I like the weather", an opinion, a joke), use judgment: sometimes a quick lookup makes your reply more relevant, and sometimes just responding or asking them about it is the more natural move. Don't look things up for the sake of it.
+- If someone says not to look anything up, or just wants your take, don't.
+Never mention the tools themselves -- just use what they return.`;
+
 // ==================== TOOL SCHEMAS ====================
 // Passed to Ollama so qwen3 can decide which tools to call and with what arguments.
 // Chat/informational tools only. The network-recon and coding-utility tools

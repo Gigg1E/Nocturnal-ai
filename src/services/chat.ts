@@ -6,7 +6,7 @@ import { maybeExtractMemory } from './memoryExtractor';
 import { logger, logBotUsage } from '../utils/logger';
 import { checkRateLimit, updateRateLimit, trackUsage } from '../database/queries';
 import { generateChat, imageUrlToBase64, OllamaMessage } from '../ollama/client';
-import { TOOL_SCHEMAS, dispatchTool } from '../ollama/tools';
+import { TOOL_SCHEMAS, TOOL_GUIDANCE, dispatchTool } from '../ollama/tools';
 import { formatResponse, buildOutgoingMessages, detectLongFormRequest, getLongFormRejection, OutgoingMessage } from '../ollama/formatter';
 
 // ==================== AGENT LOOP LIMITS ====================
@@ -116,6 +116,14 @@ async function buildUserMessage(discordMessage: DiscordMessage, mentionContent: 
   }
 
   return { message, hasImage };
+}
+
+// Personality (+ memory), then the when-to-use-tools guidance if this
+// guild has tools on. Kept out of the personality text itself so a user's
+// custom /personality doesn't lose it.
+function systemPrompt(userId: string, toolsEnabled: boolean): string {
+  const base = getEffectiveSystemPrompt(userId);
+  return toolsEnabled ? `${base}\n\n${TOOL_GUIDANCE}` : base;
 }
 
 // ==================== RESPONSE TYPES ====================
@@ -238,7 +246,7 @@ export async function processMessage(
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
   try {
     const context: OllamaMessage[] = [
-      { role: 'system', content: getEffectiveSystemPrompt(userId) },
+      { role: 'system', content: systemPrompt(userId, config.tools.enabled) },
     ];
 
     for (const entry of getHistory(userId, guildId)) {
@@ -306,7 +314,7 @@ export async function processReply(
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
   try {
     const context: OllamaMessage[] = [
-      { role: 'system', content: getEffectiveSystemPrompt(userId) },
+      { role: 'system', content: systemPrompt(userId, config.tools.enabled) },
     ];
 
     for (const entry of getHistory(userId, guildId)) {
