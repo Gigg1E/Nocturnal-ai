@@ -5,3 +5,8 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 logs/
+
+# Deployment data (guild allowlist, per-guild config, runtime status) -- lives on the server, not in git
+data/guilds.json
+data/guilds/
+data/status.json
