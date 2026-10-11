@@ -1,162 +1,171 @@
-# NET.ai — Ollama-Powered Discord Bot
+# Nocturnal
 
-NET.ai is a self-hosted Discord assistant powered by locally running [Ollama](https://ollama.com) language models. It integrates a real-world tools API to give the AI access to live data — web search, weather, networking utilities, crypto prices, security advisories, and more — without relying on any cloud AI service.
+A Discord bot powered by [Ollama](https://ollama.com) that talks like a person, not a help desk. It has opinions and a sense of humor, it can look things up while you chat, and it remembers the people it talks to.
+
+Nocturnal has two ways of joining a conversation:
+
+- **Chat mode**: mention it or reply to it, and it answers like a friend would.
+- **Answer Machine**: switch a channel into this mode, and it listens along. It only speaks up to answer a question nobody has answered, to correct something that's wrong, or to chime in when it fits. Otherwise it stays quiet and maybe drops an emoji reaction.
 
 ---
 
 ## Features
 
-- **Conversational AI** — Chat with any Ollama model directly inside Discord
-- **Vision support** — Attach images and the bot will analyze them using a vision-capable model
-- **Tool-augmented responses** — Automatically fetches live data when relevant:
-  - Web search (DuckDuckGo)
-  - Weather and forecasts
-  - IP lookup, DNS resolution, ping, WHOIS, ASN, SSL certificate checks
-  - Geocoding and reverse geocoding
-  - Timezone lookups
-  - Cryptocurrency prices
-  - Hash / Base64 / subnet computation
-  - Phone number validation
-  - CVE / NVD security vulnerability lookups
-  - HTTP status checks
-- **Per-channel access control** — Restrict the bot to specific channels
-- **User blacklist** — Block individual users from interacting with the bot
-- **Conversation history** — Maintains short-term context per user
-- **Rate limiting** — Configurable per-minute and per-hour request caps
-- **Slash commands** — Manage configuration, view stats, set the active model, and more
-- **Mermaid diagram rendering** — Renders Mermaid diagrams as images using Playwright
-- **SQLite persistence** — Lightweight local database for conversation data
-- **Structured logging** — Winston-based logging to console and file
+### Chat mode
+- **Mention or reply to talk.** Works in any channel the server allows.
+- **A personality, not an assistant voice.** Warm, dry and a little teasing by default. No roleplay asterisks and no forced follow-up questions.
+- **Per-user personality.** Anyone can rewrite how Nocturnal talks to them with `/personality`, and it applies everywhere.
+- **Long-term memory.** It picks up facts people share and brings them up when relevant. `/memory` shows what it remembers and lets you remove entries.
+- **Vision.** Attach an image and it reacts to what's in it.
+- **Rich output.** Mermaid diagrams and tables are rendered as images.
+
+### Answer Machine
+- **Opt-in per channel.** No memory and no per-user history, just a short rolling view of the recent conversation.
+- **Decides for itself when to speak.** A fast model rates each moment: an open question, misinformation, something worth reacting to, or nothing.
+- **Adjustable chattiness ("heat").** `Low` and `Medium` only answer and correct. `High` and `TalksALot` also join casual conversation.
+- **Reactions, GIFs and stickers.** It reacts with emojis, including the server's custom ones. GIFs and stickers are optional.
+- **Sees images and short clips** posted in the channel.
+- **Separate from chat mode.** A channel in Answer Machine mode never falls back to chat mode, even on a direct mention.
+
+### Live data (both modes)
+When fresh information would make an answer correct or more relevant, Nocturnal looks it up. Each tool call shows a status line in chat, for example `✓ get_weather • 1.4s`.
+
+- Web search
+- Weather
+- Current time and timezones
+- Geocoding and reverse geocoding
+- Cryptocurrency prices
+
+The model decides when a lookup is worth it. "What's the weather today?" gets a lookup. "I like the weather lately" usually just gets a reply.
+
+### Running it across servers
+- **Per-server config.** Each server's admins manage their own channels, Answer Machine settings, rate limits and tools with slash commands, without affecting other servers.
+- **Server allowlist.** The bot automatically leaves any server you haven't approved, so a stray invite link can't add it somewhere unexpected.
+- **Scheduled notifications.** Daily weather, severe-weather alerts, news digests and NASA's Astronomy Picture of the Day, posted to a channel. This uses an optional companion service.
+- **Rate limiting** per user, per minute and per hour, plus a cap on concurrent requests.
 
 ---
 
-## Prerequisites
+## Requirements
 
 | Requirement | Notes |
 |---|---|
-| [Node.js](https://nodejs.org) v18+ | Runtime |
-| [Ollama](https://ollama.com) | Local AI inference server |
-| [Ollama-Tools API](https://github.com/Gigg1E/Ollama-Tools) | Required — provides all real-world data endpoints |
-| A Discord bot token | From the [Discord Developer Portal](https://discord.com/developers) |
+| [Node.js](https://nodejs.org) 20+ | Runtime. Native modules (SQLite) must be built with the same Node version that runs the bot. |
+| [Ollama](https://ollama.com) | Model inference. Local or [cloud models](https://ollama.com/cloud) both work. |
+| [Ollama-Tools API](https://github.com/Gigg1E/Ollama-Tools) | Provides the live-data tools. Without it the bot still chats, but has no lookups. |
+| A Discord application and bot token | From the [Discord Developer Portal](https://discord.com/developers/applications). Enable the **Message Content** and **Server Members** privileged intents. |
 
-### Ollama Models
+### Models
 
-Pull the required models before starting:
+| Purpose | Default | Where it's set |
+|---|---|---|
+| Chat mode | `kimi-k2.6:cloud` | `ollama.chatModel` in `config.json`, or `/model` |
+| Answer Machine | `gemma4:cloud` | `src/services/casualChat.ts` |
+| Memory extraction | `gemma4:cloud` | `src/services/memoryExtractor.ts` |
 
-```bash
-ollama pull qwen3:8b          # Primary chat model
-ollama pull qwen3-vl:8b       # Vision model (image analysis)
-ollama pull qwen2.5:1.5b      # Entity extractor (tool routing)
-```
-
----
-
-## Dependency: Ollama-Tools API
-
-**This bot requires the [Ollama-Tools API](https://github.com/Gigg1E/Ollama-Tools) to be running before startup.**
-
-The Tools API is a separate lightweight Node.js server that runs locally on port `3100` and provides all external data capabilities (search, weather, networking, etc.). Without it, the bot will start but all tool-based features will be unavailable.
-
-**Setup:**
-
-```bash
-git clone https://github.com/Gigg1E/Ollama-Tools
-cd Ollama-Tools/Ollama-Tools-API
-npm install
-npm start
-```
-
-Verify it is running:
-
-```bash
-curl http://localhost:3100/health
-```
+Answer Machine uses a separate, faster model on purpose. It joins conversations that are already happening, so a reply has to arrive in under a second or two to feel natural. A slower, richer model works fine for chat mode, because there the person asked and expects a moment of "thinking".
 
 ---
 
-## Installation
+## Setup
+
+### 1. Install
 
 ```bash
-git clone <your-repo-url>
-cd NETai
+git clone https://github.com/Gigg1E/Nocturnal-ai.git
+cd Nocturnal-ai
 npm install
 ```
 
-### Environment Variables
+### 2. Environment
 
-Create a `.env` file in the project root:
+Copy `.env.example` to `.env` and fill it in:
 
 ```env
-DISCORD_TOKEN=your_discord_bot_token
-DISCORD_CLIENT_ID=your_discord_application_id
+DISCORD_TOKEN=            # Bot token
+OWNER_ID=                 # Your Discord user ID (unlocks owner-only commands like /model)
+
+OLLAMA_HOST=http://127.0.0.1:11434
+TOOLS_API_HOST=http://localhost:3100      # Ollama-Tools API
+WEBHOOK_API_HOST=http://localhost:3200    # Optional: scheduled-notifications service
+
+KLIPY_API_KEY=            # Optional: GIF search for Answer Machine
 ```
 
----
+### 3. Allow your server(s)
 
-## Configuration
-
-All bot behaviour is controlled via [config.json](config.json). Key settings:
-
-| Setting | Description |
-|---|---|
-| `bot.systemPrompt` | The AI's personality and instructions |
-| `bot.historySize` | Number of prior messages retained per user |
-| `bot.cooldownSeconds` | Per-user cooldown between messages |
-| `ollama.chatModel` | Primary Ollama model for chat |
-| `ollama.visionModel` | Model used for image analysis |
-| `tools.enabled` | Enable or disable the Tools API integration |
-| `channels.allowed` | List of channel IDs the bot will respond in |
-| `rateLimit` | Per-minute and per-hour request limits |
-
----
-
-## Running the Bot
-
-**Development:**
+Nocturnal leaves any server that isn't on its allowlist (`data/guilds.json`), so add yours before inviting it:
 
 ```bash
-npm run dev
+node scripts/manage-guilds.js add <guildId> "My Server"
+node scripts/manage-guilds.js list
 ```
 
-**Production (compiled):**
+If the bot was already in the server before you allowlisted it, restart it so its slash commands get registered there.
+
+### 4. Build and run
 
 ```bash
 npm run build
 npm start
 ```
 
-> Ensure Ollama is running (`ollama serve`) and the Ollama-Tools API is running on port `3100` before starting the bot.
+Use `npm run dev` to run straight from source during development. For a long-running deployment, a process manager like [PM2](https://pm2.keymetrics.io) works well. Rebuild with `npm run build` before restarting after any change.
+
+Slash commands register automatically for every allowlisted server at startup. No separate deploy step is needed.
 
 ---
 
-## Slash Commands
+## Configuration
 
-| Command | Description |
-|---|---|
-| `/help` | Display available commands and usage |
-| `/model` | View or change the active Ollama model |
-| `/config` | View current bot configuration |
-| `/stats` | Show usage statistics |
-| `/status` | Check connectivity to Ollama and the Tools API |
-| `/channel` | Manage allowed channels |
-| `/blacklist` | Manage the user blacklist |
-| `/webhook` | Configure webhook settings |
+Configuration has three layers:
+
+| Layer | Where | Who controls it | What's in it |
+|---|---|---|---|
+| Global | `config.json` | Bot host | Default personality (`bot.systemPrompt`), chat model and generation settings, logging, conversation history length |
+| Per server | `data/guilds/<guildId>/config.json` | That server's admins, via `/config` and `/channel` | Allowed and blocked channels, Answer Machine channels and heat, GIFs and stickers, rate limits, tools on/off, user blacklist |
+| Per user | SQLite (`data/net.db`) | Each user, via `/personality` and `/memory` | Custom personality, remembered facts, usage and rate-limit tracking |
+
+Server and user data are created automatically and kept out of git.
+
+---
+
+## Slash commands
+
+| Command | Who | What it does |
+|---|---|---|
+| `/help` | Everyone | How to use Nocturnal |
+| `/personality` | Everyone | View, set or reset how Nocturnal talks to you |
+| `/memory` | Everyone | See what Nocturnal remembers about you, and forget entries |
+| `/clearchat` | Everyone | Start the conversation fresh (keeps memory and personality) |
+| `/channel` | Admins | Allowed and blocked channels, Answer Machine channels, heat, GIFs and stickers |
+| `/config` | Admins | View and change this server's settings |
+| `/blacklist` | Admins | Block users from talking to the bot |
+| `/stats` | Admins | Usage statistics |
+| `/status` | Admins | Live health check of every tool endpoint |
+| `/webhook` | Admins | Manage scheduled notifications |
+| `/model` | Owner | List, view or switch the chat model |
 
 ---
 
 ## Architecture
 
 ```
-Discord
-  └── discord.js client
-        ├── Event handlers (message, interaction)
-        ├── Ollama client (chat + vision inference)
-        ├── Tool router (keyword + weight scoring)
-        │     └── Ollama-Tools API (port 3100)
-        ├── Entity extractor (qwen2.5:1.5b)
-        ├── Mermaid renderer (Playwright)
-        └── SQLite database (conversation history)
+Discord ──► discord.js client
+              │
+              ├─ Chat mode ─────────► Ollama (chat model)
+              │    personality + memory + per-user history
+              │
+              ├─ Answer Machine ────► Ollama (fast model)
+              │    rolling channel buffer → decide → reply / react
+              │
+              ├─ Tool calls (both) ──► Ollama-Tools API   (search, weather, time, geo, crypto)
+              ├─ /webhook ───────────► Notifications service (optional)
+              ├─ Rendering ──────────► Mermaid / tables → images (Playwright)
+              └─ Storage ────────────► SQLite + per-server JSON config
 ```
+
+The bot doesn't implement tools itself. Every lookup is an HTTP call to the Tools API, which runs as a separate process with its own lifecycle.
 
 ---
 
