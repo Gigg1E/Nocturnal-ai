@@ -8,7 +8,7 @@ import { logger } from '../utils/logger';
 // A GIF's first frame often isn't what it's about (the punchline is the
 // motion), so for GIFs the vision model gets a 2x2 grid of 4 frames spread
 // across the whole clip instead of one still. Needs ffmpeg/ffprobe on PATH
-// (present on mqserver); any failure just returns null and the caller falls
+// (optional); any failure just returns null and the caller falls
 // back to the single preview frame.
 
 const run = promisify(execFile);

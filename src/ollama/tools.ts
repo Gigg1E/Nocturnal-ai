@@ -32,11 +32,8 @@ export const TOOL_GUIDANCE = `You have live tools: search_web, get_weather, get_
 Never mention the tools themselves -- just use what they return.`;
 
 // ==================== TOOL SCHEMAS ====================
-// Passed to Ollama so qwen3 can decide which tools to call and with what arguments.
-// Chat/informational tools only. The network-recon and coding-utility tools
-// (IP/DNS/WHOIS/ASN/SSL/HTTP/phone/CVE lookups, ping, hash, base64, subnet)
-// were disconnected from here and moved to ./network-tools/index.ts — kept
-// working there for reuse elsewhere, just not exposed to this bot anymore.
+// Passed to Ollama so the model can decide which tools to call and with what arguments.
+// Chat/informational tools only.
 
 export const TOOL_SCHEMAS: ToolDefinition[] = [
   {

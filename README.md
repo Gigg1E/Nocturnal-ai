@@ -53,6 +53,7 @@ The model decides when a lookup is worth it. "What's the weather today?" gets a 
 | [Node.js](https://nodejs.org) 20+ | Runtime. Native modules (SQLite) must be built with the same Node version that runs the bot. |
 | [Ollama](https://ollama.com) | Model inference. Local or [cloud models](https://ollama.com/cloud) both work. |
 | [Ollama-Tools API](https://github.com/Gigg1E/Ollama-Tools) | Provides the live-data tools. Without it the bot still chats, but has no lookups. |
+| [ffmpeg](https://ffmpeg.org) (optional) | Lets Answer Machine see GIFs and short video clips frame by frame. Without it, it sees a single preview frame. |
 | A Discord application and bot token | From the [Discord Developer Portal](https://discord.com/developers/applications). Enable the **Message Content** and **Server Members** privileged intents. |
 
 ### Models

@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm run *)",
-      "Bash(pm2 restart *)",
-      "Bash(pm2 logs *)"
-    ]
-  }
-}

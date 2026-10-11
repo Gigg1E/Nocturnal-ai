@@ -10,3 +10,6 @@ logs/
 data/guilds.json
 data/guilds/
 data/status.json
+
+# Local Claude Code settings
+.claude/
