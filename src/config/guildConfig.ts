@@ -8,6 +8,7 @@ import * as path from 'path';
 // global config.json — host-resource / shared-baseline concerns, not
 // something individual guild admins (or even individual users) control.
 export interface GuildConfig {
+  diagnostics: { enabled: boolean; channelId: string | null };
   bot: {
     responseFormat: 'text' | 'embed';
     maxResponseLength: number;
@@ -45,6 +46,11 @@ export interface GuildConfig {
     // Lets the Answer Machine send GIFs (Klipy search) and this server's
     // stickers. Off by default -- not every server wants that.
     media: boolean;
+    typingProtection: boolean;
+    turnSpacingMs: number;
+    groupPauseMs: number;
+    typingGraceMs: number;
+    maxTurnWaitMs: number;
   };
 }
 
@@ -77,6 +83,7 @@ export function resolveHeat(config: GuildConfig): number {
 // Matches the pre-existing /config reset defaults so behavior doesn't change
 // for a guild until an admin actually touches something.
 export const DEFAULT_GUILD_CONFIG: GuildConfig = {
+  diagnostics: { enabled: true, channelId: null },
   bot: {
     responseFormat: 'text',
     maxResponseLength: 1999,
@@ -104,6 +111,11 @@ export const DEFAULT_GUILD_CONFIG: GuildConfig = {
     chattiness: 'medium',
     customHeat: 50,
     media: false,
+    typingProtection: true,
+    turnSpacingMs: 8000,
+    groupPauseMs: 4000,
+    typingGraceMs: 8000,
+    maxTurnWaitMs: 15000,
   },
 };
 

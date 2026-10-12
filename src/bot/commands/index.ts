@@ -1,3 +1,5 @@
+import { answerMachineCommand } from './answerMachine';
+import { diagnosticsCommand } from './diagnostics';
 import {
   SlashCommandBuilder,
   SlashCommandSubcommandsOnlyBuilder,
@@ -34,6 +36,8 @@ export const commands = new Collection<string, Command>();
 
 // Register all commands
 const commandList: Command[] = [
+  answerMachineCommand,
+  diagnosticsCommand,
   modelCommand,
   configCommand,
   blacklistCommand,

@@ -8,6 +8,8 @@ export type Intent = 'none' | 'answer' | 'correct' | 'react' | 'chat';
 
 export interface Entry {
   author: string;
+  authorId?: string;
+  directToBot?: boolean;
   isBot: boolean;
   content: string;
   // Pictures in the message (attachments, link-preview images/GIFs,
@@ -320,7 +322,7 @@ export function allAddressedElsewhere(fresh: Entry[]): boolean {
 export function computeMomentum(entries: Entry[], now: number): number {
   const recent = entries.filter((e) => !e.isBot && now - e.ts <= 120_000);
   const rate = Math.min(1, recent.length / 8);
-  const people = new Set(recent.map((e) => e.author)).size;
+  const people = new Set(recent.map((e) => e.authorId ?? e.author)).size;
   const peopleScore = Math.min(1, Math.max(0, (people - 1) / 2));
   return 0.6 * rate + 0.4 * peopleScore;
 }
@@ -392,7 +394,7 @@ export function fairShareExceeded(entries: Entry[]): boolean {
   const last = entries.slice(-12);
   if (!last.length) return false;
   const bot = last.filter((e) => e.isBot).length;
-  const humans = new Set(last.filter((e) => !e.isBot).map((e) => e.author)).size;
+  const humans = new Set(last.filter((e) => !e.isBot).map((e) => e.authorId ?? e.author)).size;
   const cap = Math.max(0.2, 1 / (humans + 1));
   return bot / last.length > cap;
 }
@@ -421,7 +423,7 @@ export function partnerContinuing(entries: Entry[], fresh: Entry[]): boolean {
 export function yieldPenalty(entries: Entry[], now: number, bonus: number): number {
   if (bonus > 0) return 0;
   const recent = entries.filter((e) => !e.isBot && now - e.ts <= 60_000);
-  const people = new Set(recent.map((e) => e.author)).size;
+  const people = new Set(recent.map((e) => e.authorId ?? e.author)).size;
   return recent.length >= 4 && people >= 2 ? 2 : 0;
 }
 
@@ -446,21 +448,26 @@ export function shouldEngage(
   // From imageBoost(). Counts toward every intent, but -- unlike bonus --
   // never lifts chatBlocked: an image aimed at someone else isn't an opening.
   imgBoost = 0,
+  heat = 100,
 ): Verdict {
+  const scale = Math.max(0, Math.min(100, heat)) / 100;
+  const momentumWeight = 0.5 + scale * 1.5;
+  const bonusWeight = 0.4 + scale * 0.6;
+  const imageWeight = 0.4 + scale * 0.6;
   if (intent === 'none') return { engage: false, score: interest, threshold: null };
   if (intent === 'chat' && chatBlocked && bonus === 0) {
     return { engage: false, score: interest, threshold: null };
   }
 
   if (intent === 'react') {
-    const score = interest + momentum * 2 + imgBoost + jitter;
+    const score = interest + momentum * momentumWeight + imgBoost * imageWeight + jitter;
     return { engage: score >= p.thresholdReact, score, threshold: p.thresholdReact };
   }
 
   const threshold = intent === 'chat'
     ? (p.thresholdChat === null ? null : p.thresholdChat + chatPenalty)
     : p.thresholdAnswer;
-  const score = interest + bonus + momentum * 2 + imgBoost + jitter;
+  const score = interest + bonus * bonusWeight + momentum * momentumWeight + imgBoost * imageWeight + jitter;
   if (threshold === null) return { engage: false, score, threshold: null };
   return { engage: score >= threshold, score, threshold };
 }

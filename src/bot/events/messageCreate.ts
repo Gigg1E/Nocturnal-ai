@@ -1,3 +1,4 @@
+import { recordDiagnostic, errorReason, DiagnosticTrace } from '../../services/diagnostics';
 import { Message, StickerFormatType, AttachmentBuilder, EmbedBuilder, TextChannel, DMChannel, NewsChannel, ThreadChannel } from 'discord.js';
 import { logger, logRateLimit } from '../../utils/logger';
 import { isUserBlacklisted, isChannelAllowed, isCasualChatChannel } from '../../config/guildConfig';
@@ -126,9 +127,8 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   // direct mentions/replies -- before the chat-bot/Kimi pipeline below ever
   // sees them. A channel opted into this mode never falls through to the
   // normal mention pipeline: mentioning the bot here is evaluated
-  // immediately (no waiting for a lull) through the same heat-based
-  // decision as ambient messages -- being addressed boosts the score but
-  // doesn't force a reply. No per-user memory either way; only the
+  // through the turn-taking scheduler. Explicit mentions and substantive
+  // replies are queued for an answer; ambient messages use heat scoring. No per-user memory either way; only the
   // channel's short-lived conversation session.
   if (message.guildId && isSendableChannel(message.channel) && isCasualChatChannel(guildId, message.channel.id)) {
     if (isUserBlacklisted(guildId, message.author.id)) return;
@@ -174,6 +174,8 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 
     recordAmbientMessage(message.channel.id, {
       author: nameFor(message.author.id, message.author.username),
+      authorId: message.author.id,
+      directToBot: new RegExp(`<@!?${botId}>`).test(message.content) || isReplyToBot,
       content: bufferedContent,
       ...messagePreviews(message),
       ts: Date.now(),
@@ -291,6 +293,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
       });
   }, THINKING_DELAY_MS);
 
+  let trace: DiagnosticTrace | undefined;
   try {
     let response;
     if (repliedToMessage) {
@@ -299,6 +302,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
       response = await processMessage(message, cleanContent, { onToolStart, onToolDone });
     }
 
+    trace = response.trace;
     clearInterval(typingInterval);
     clearTimeout(thinkingTimer);
 
@@ -389,6 +393,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
         };
         await message.reply(opts);
       }
+      recordDiagnostic(trace, { action: 'sent', reason: 'delivery_complete', durationMs: Date.now() - turnStart, responseMs: Date.now() - message.createdTimestamp, success: true }, true);
     } else if (!response.success) {
       const target = status.msg ?? message;
       await target.reply({
@@ -399,6 +404,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   } catch (error) {
     clearInterval(typingInterval);
     clearTimeout(thinkingTimer);
+    recordDiagnostic(trace, { action: 'error', reason: errorReason(error), durationMs: Date.now() - turnStart, success: false }, true);
     logger.error('Error in messageCreate handler:', error);
     try {
       const target = status.msg ?? message;

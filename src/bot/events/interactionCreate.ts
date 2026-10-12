@@ -1,3 +1,5 @@
+import { handleAnswerMachine } from '../commands/answerMachine';
+import { helpPanel } from '../commands/help';
 import {
   Interaction,
   ChatInputCommandInteraction,
@@ -124,6 +126,9 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
 async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
   const [action] = interaction.customId.split(':');
 
+  if (action === 'am_action') { await handleAnswerMachine(interaction); return; }
+  if (action === 'help_page') { await interaction.update(helpPanel(interaction.values[0])); return; }
+
   logger.info(`Select: ${action} by ${interaction.user.tag}`);
 
   if (action.startsWith('channel_') && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
@@ -164,6 +169,7 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
 async function handleChannelSelectMenu(interaction: ChannelSelectMenuInteraction): Promise<void> {
   const [action, op] = interaction.customId.split(':');
   logger.info(`ChannelSelect: ${action}:${op} by ${interaction.user.tag} -> ${interaction.values[0]}`);
+  if (action === 'am_pick') { await handleAnswerMachine(interaction); return; }
   if (action === 'webhook_add_channel') {
     await handleWebhookChannelSelect(interaction);
     return;
@@ -182,6 +188,7 @@ async function handleChannelSelectMenu(interaction: ChannelSelectMenuInteraction
 async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
 
+  if (action === 'am_modal') { await handleAnswerMachine(interaction); return; }
   logger.info(`Modal: ${action} by ${interaction.user.tag}`);
 
   switch (action) {
@@ -332,9 +339,8 @@ async function handleChannelActionSelect(interaction: StringSelectMenuInteractio
     const config = loadGuildConfig(guildId);
     config.channels.allowed = [];
     config.channels.blocked = [];
-    config.casualChat.channels = [];
     saveGuildConfig(guildId, config);
-    await interaction.update({ content: 'All channel restrictions and Answer Machine channels have been reset.', embeds: [], components: [] });
+    await interaction.update({ content: 'All channel restrictions have been reset.', embeds: [], components: [] });
     return;
   }
 

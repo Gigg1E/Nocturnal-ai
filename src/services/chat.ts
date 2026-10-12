@@ -1,3 +1,4 @@
+import { startTrace, recordDiagnostic, errorReason, DiagnosticTrace } from './diagnostics';
 import { Message as DiscordMessage } from 'discord.js';
 import { getConfig } from '../config';
 import { loadGuildConfig } from '../config/guildConfig';
@@ -130,6 +131,7 @@ function systemPrompt(userId: string, toolsEnabled: boolean): string {
 
 export interface ChatResponse {
   success: boolean;
+  trace?: DiagnosticTrace;
   parts: OutgoingMessage[];
   error?: string;
   rateLimited?: boolean;
@@ -143,13 +145,25 @@ export async function runAgentLoop(
   toolsEnabled: boolean,
   callbacks?: AgentCallbacks,
   model?: string,
+  trace?: DiagnosticTrace,
 ): Promise<string> {
   const tools = toolsEnabled ? TOOL_SCHEMAS : [];
   let totalFailures = 0;
   let toolCalls = 0;
 
+  const callModel = async (withTools: boolean) => {
+    const started = Date.now();
+    try {
+      const response = await generateChat({ messages, tools: withTools && tools.length > 0 ? tools : undefined, model });
+      recordDiagnostic(trace, { action: 'model', model: model ?? getConfig().ollama.chatModel, durationMs: Date.now() - started, success: true });
+      return response;
+    } catch (error) {
+      recordDiagnostic(trace, { action: 'model', model: model ?? getConfig().ollama.chatModel, durationMs: Date.now() - started, success: false, reason: errorReason(error) });
+      throw error;
+    }
+  };
   for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await generateChat({ messages, tools: tools.length > 0 ? tools : undefined, model });
+    const response = await callModel(true);
     const msg = response.message;
 
     // No tool calls — this is the final answer
@@ -176,6 +190,7 @@ export async function runAgentLoop(
         args = parsed as Record<string, unknown>;
       } catch {
         totalFailures++;
+        recordDiagnostic(trace, { action: 'tool', tool: toolName, success: false, reason: 'invalid_arguments' });
         messages.push({ role: 'tool', content: JSON.stringify({ error: 'Invalid tool arguments' }) });
         continue;
       }
@@ -184,17 +199,22 @@ export async function runAgentLoop(
         await callbacks.onToolStart(toolName, args);
       }
 
+      const toolStarted = Date.now();
       let resultContent: string;
+      let toolSuccess = false;
+      let toolReason: string | undefined;
       try {
         const result = toolsEnabled
           ? await dispatchTool(toolName, args)
           : { success: false, error: 'Tools are disabled' };
         resultContent = JSON.stringify(result.success ? result.data : { error: result.error });
-        if (!result.success) totalFailures++;
+        toolSuccess = result.success;
+        if (!result.success) { totalFailures++; toolReason = toolsEnabled ? 'tool_failed' : 'tools_disabled'; }
       } catch (err) {
         resultContent = JSON.stringify({ error: (err as Error).message });
-        totalFailures++;
+        totalFailures++; toolReason = errorReason(err);
       }
+      recordDiagnostic(trace, { action: 'tool', tool: toolName, durationMs: Date.now() - toolStarted, success: toolSuccess, reason: toolReason });
 
       if (callbacks?.onToolDone) {
         await callbacks.onToolDone(toolName);
@@ -209,7 +229,7 @@ export async function runAgentLoop(
         role: 'user',
         content: 'Some tools failed. Answer with what you have or let the user know.',
       });
-      const fallback = await generateChat({ messages, model });
+      const fallback = await callModel(false);
       return fallback.message.content || '';
     }
   }
@@ -220,7 +240,7 @@ export async function runAgentLoop(
     role: 'user',
     content: 'Answer with the best information gathered so far.',
   });
-  const fallback = await generateChat({ messages, model });
+  const fallback = await callModel(false);
   return fallback.message.content || '';
 }
 
@@ -235,14 +255,18 @@ export async function processMessage(
   const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
   const concurrencyKey = historyKey(userId, guildId);
+  const trace = startTrace(guildId, discordMessage.channel.id, 'chat', discordMessage.id);
 
   if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
-    return { success: false, parts: [], rateLimited: true, error: 'concurrent_limit' };
+    recordDiagnostic(trace, { action: 'skipped', reason: 'rate_limited' }, true);
+    return { success: false, trace, parts: [], rateLimited: true, error: 'concurrent_limit' };
   }
 
   const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
+    recordDiagnostic(trace, { action: 'skipped', reason: 'rate_limited' }, true);
     return {
+      trace,
       success: false,
       parts: [],
       rateLimited: true,
@@ -252,7 +276,8 @@ export async function processMessage(
   }
 
   if (detectLongFormRequest(mentionContent)) {
-    return { success: true, parts: [{ content: getLongFormRejection(), attachments: [] }] };
+    recordDiagnostic(trace, { action: 'skipped', reason: 'long_form' }, true);
+    return { trace, success: true, parts: [{ content: getLongFormRejection(), attachments: [] }] };
   }
 
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
@@ -269,7 +294,7 @@ export async function processMessage(
     const { message: userMessage, hasImage } = await buildUserMessage(discordMessage, mentionContent);
     context.push(userMessage);
 
-    const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
+    const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks, undefined, trace);
 
     const formatted = await formatResponse(aiContent);
     addToHistory(userId, guildId, mentionContent, aiContent);
@@ -278,11 +303,14 @@ export async function processMessage(
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
     const parts = buildOutgoingMessages(formatted.segments, config.bot.maxResponseLength);
-    return { success: true, parts };
+    recordDiagnostic(trace, { action: parts.length ? 'generated' : 'error', reason: parts.length ? 'generation_complete' : 'empty_output', durationMs: Date.now() - trace.startedAt, success: parts.length > 0 });
+    return { success: parts.length > 0, trace, parts };
   } catch (error) {
+    recordDiagnostic(trace, { action: 'error', reason: errorReason(error), durationMs: Date.now() - trace.startedAt, success: false }, true);
     logger.error('Error processing message:', error);
     return {
       success: false,
+      trace,
       parts: [{ content: 'Something went wrong. Try again.', attachments: [] }],
       error: (error as Error).message,
     };
@@ -303,14 +331,18 @@ export async function processReply(
   const config = loadGuildConfig(guildId);
   const userId = discordMessage.author.id;
   const concurrencyKey = historyKey(userId, guildId);
+  const trace = startTrace(guildId, discordMessage.channel.id, 'chat', discordMessage.id);
 
   if ((inFlightCounts.get(concurrencyKey) ?? 0) >= config.bot.maxChatsPerUser) {
-    return { success: false, parts: [], rateLimited: true, error: 'concurrent_limit' };
+    recordDiagnostic(trace, { action: 'skipped', reason: 'rate_limited' }, true);
+    return { success: false, trace, parts: [], rateLimited: true, error: 'concurrent_limit' };
   }
 
   const rateLimitCheck = checkRateLimit(userId, guildId);
   if (!rateLimitCheck.allowed) {
+    recordDiagnostic(trace, { action: 'skipped', reason: 'rate_limited' }, true);
     return {
+      trace,
       success: false,
       parts: [],
       rateLimited: true,
@@ -320,7 +352,8 @@ export async function processReply(
   }
 
   if (detectLongFormRequest(mentionContent)) {
-    return { success: true, parts: [{ content: getLongFormRejection(), attachments: [] }] };
+    recordDiagnostic(trace, { action: 'skipped', reason: 'long_form' }, true);
+    return { trace, success: true, parts: [{ content: getLongFormRejection(), attachments: [] }] };
   }
 
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
@@ -365,7 +398,7 @@ export async function processReply(
     const { message: userMessage, hasImage } = await buildUserMessage(discordMessage, mentionContent);
     context.push(userMessage);
 
-    const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks);
+    const aiContent = await runAgentLoop(context, config.tools.enabled, callbacks, undefined, trace);
 
     const formatted = await formatResponse(aiContent);
     addToHistory(userId, guildId, mentionContent, aiContent);
@@ -374,11 +407,14 @@ export async function processReply(
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
     const parts = buildOutgoingMessages(formatted.segments, config.bot.maxResponseLength);
-    return { success: true, parts };
+    recordDiagnostic(trace, { action: parts.length ? 'generated' : 'error', reason: parts.length ? 'generation_complete' : 'empty_output', durationMs: Date.now() - trace.startedAt, success: parts.length > 0 });
+    return { success: parts.length > 0, trace, parts };
   } catch (error) {
+    recordDiagnostic(trace, { action: 'error', reason: errorReason(error), durationMs: Date.now() - trace.startedAt, success: false }, true);
     logger.error('Error processing reply:', error);
     return {
       success: false,
+      trace,
       parts: [{ content: 'Something went wrong. Try again.', attachments: [] }],
       error: (error as Error).message,
     };

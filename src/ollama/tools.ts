@@ -205,6 +205,7 @@ export async function searchWeb(query: string, numResults: number = 5): Promise<
     });
     if (!response.ok) throw new Error(`Search API error: ${response.status}`);
     const data = await response.json();
+    if (data && typeof data === 'object' && (('error' in data && !!data.error) || ('success' in data && data.success === false))) throw new Error('Tool returned a failure response');
     logToolCall('search', { query, numResults }, true, Date.now() - startTime);
     return { success: true, data };
   } catch (error) {
@@ -220,6 +221,7 @@ export async function getWeather(location: string): Promise<ToolResult> {
     const response = await boundedFetch(`${TOOLS_API_HOST}/api/weather/${encodeURIComponent(location)}`);
     if (!response.ok) throw new Error(`Weather API error: ${response.status}`);
     const data = await response.json();
+    if (data && typeof data === 'object' && (('error' in data && !!data.error) || ('success' in data && data.success === false))) throw new Error('Tool returned a failure response');
     logToolCall('weather', { location }, true, Date.now() - startTime);
     return { success: true, data };
   } catch (error) {
@@ -235,6 +237,7 @@ export async function getTimezone(timezone: string): Promise<ToolResult> {
     const response = await boundedFetch(`${TOOLS_API_HOST}/api/timezone/${encodeURIComponent(timezone)}`);
     if (!response.ok) throw new Error(`Timezone API error: ${response.status}`);
     const data = await response.json();
+    if (data && typeof data === 'object' && (('error' in data && !!data.error) || ('success' in data && data.success === false))) throw new Error('Tool returned a failure response');
     logToolCall('timezone', { timezone }, true, Date.now() - startTime);
     return { success: true, data };
   } catch (error) {
@@ -250,6 +253,7 @@ export async function getCurrentTime(): Promise<ToolResult> {
     const response = await boundedFetch(`${TOOLS_API_HOST}/api/time`);
     if (!response.ok) throw new Error(`Time API error: ${response.status}`);
     const data = await response.json();
+    if (data && typeof data === 'object' && (('error' in data && !!data.error) || ('success' in data && data.success === false))) throw new Error('Tool returned a failure response');
     logToolCall('time', {}, true, Date.now() - startTime);
     return { success: true, data };
   } catch (error) {
@@ -265,6 +269,7 @@ export async function geocode(location: string): Promise<ToolResult> {
     const response = await boundedFetch(`${TOOLS_API_HOST}/api/geocode/${encodeURIComponent(location)}`);
     if (!response.ok) throw new Error(`Geocode API error: ${response.status}`);
     const data = await response.json();
+    if (data && typeof data === 'object' && (('error' in data && !!data.error) || ('success' in data && data.success === false))) throw new Error('Tool returned a failure response');
     logToolCall('geocode', { location }, true, Date.now() - startTime);
     return { success: true, data };
   } catch (error) {
@@ -280,6 +285,7 @@ export async function reverseGeocode(lat: number, lon: number): Promise<ToolResu
     const response = await boundedFetch(`${TOOLS_API_HOST}/api/reverse-geocode/${lat}/${lon}`);
     if (!response.ok) throw new Error(`Reverse geocode API error: ${response.status}`);
     const data = await response.json();
+    if (data && typeof data === 'object' && (('error' in data && !!data.error) || ('success' in data && data.success === false))) throw new Error('Tool returned a failure response');
     logToolCall('reverse-geocode', { lat, lon }, true, Date.now() - startTime);
     return { success: true, data };
   } catch (error) {
@@ -295,6 +301,7 @@ export async function getCryptoPrice(symbol: string): Promise<ToolResult> {
     const response = await boundedFetch(`${TOOLS_API_HOST}/api/crypto/${encodeURIComponent(symbol)}`);
     if (!response.ok) throw new Error(`Crypto API error: ${response.status}`);
     const data = await response.json();
+    if (data && typeof data === 'object' && (('error' in data && !!data.error) || ('success' in data && data.success === false))) throw new Error('Tool returned a failure response');
     logToolCall('crypto', { symbol }, true, Date.now() - startTime);
     return { success: true, data };
   } catch (error) {

@@ -1,58 +1,14 @@
-import {
-  SlashCommandBuilder,
-  ChatInputCommandInteraction,
-  EmbedBuilder,
-} from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } from 'discord.js';
 import { Command } from './index';
-import { getConfig } from '../../config';
-
-export const helpCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('help')
-    .setDescription('Get help with using Nocturnal'),
-
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const config = getConfig();
-
-    const embed = new EmbedBuilder()
-      .setTitle('Nocturnal')
-      .setDescription('Chat assistant. Direct answers, no fluff.')
-      .setColor(0x2f3136)
-      .addFields(
-        {
-          name: 'How to Use',
-          value: [
-            '**Mention me:** `@Nocturnal your question`',
-            '**Reply to me:** Continue the conversation',
-            '**Send images:** `@Nocturnal` + attachment',
-          ].join('\n'),
-        },
-        {
-          name: 'What I Do',
-          value: [
-            '• General chat & questions',
-            '• Image/screenshot analysis',
-            '• Web search, weather, time, location, crypto prices',
-          ].join('\n'),
-        },
-        {
-          name: 'Make Me Yours',
-          value: [
-            '`/personality` — customize how I talk to you (follows you everywhere)',
-            '`/memory` — see, add, or clear what I remember about you long-term',
-            '`/clearchat` — forget the current conversation only (not /memory)',
-          ].join('\n'),
-        },
-        {
-          name: 'Context',
-          value: `I remember your last ${config.bot.historySize} exchanges in a conversation. Reply to continue, or just mention me again.`,
-        }
-      )
-      .setTimestamp();
-
-    await interaction.reply({
-      embeds: [embed],
-      ephemeral: true,
-    });
-  },
+const PAGES: Record<string, [string,string]> = {
+  chat: ['Chatting with Nocturnal', 'Mention the bot or reply to it to ask a question. Attach images for analysis.\n/personality adjusts your personal style. /memory manages long-term facts. /clearchat clears your current conversation.\n/status shows service status; /stats shows usage.'],
+  navigation: ['Using the menus', 'Run a command to open its private panel. Choose an action from the dropdown; select a channel or complete the text dialog when asked. Saved changes apply to this server. Use the command again to reopen a panel.\nAdministrator permission is checked when changing server settings.'],
+  answer: ['Answer Machine', '/answer-machine manages enabled channels, heat, timing, media and diagnostics.\nHeat 0 is very selective; 50 favors useful contributions; 80 encourages conversation; 100 participates frequently. Casual unsolicited chat opens at 70. Heat never guarantees an answer. Direct requests remain responsive.\nGroup quiet pause lets people finish. Minimum turn spacing limits consecutive bot turns. Typing protection yields to humans; its grace and maximum wait are adjustable independently of heat, server-wide. Direct requests briefly yield for up to 3 seconds, honor minimum spacing, and survive unrelated chatter. Optional contributions expire when no opening appears.'],
+  admin: ['Server administration', '/channel manages allowed and blocked channels; blocked channels take precedence.\n/model selects the model. /config provides advanced settings. /blacklist manages exclusions. /webhook manages dedicated chat integrations.\nUse /answer-machine for conversational controls.'],
+  diagnostics: ['Diagnostics', 'Choose a log channel in /answer-machine. Everyone with channel access can see operational metadata. Logs contain timings, decisions, weights, message IDs, reaction emojis and tool outcomes, excluding prompts, responses and tool arguments.\n/diagnostics recent privately shows recent events; /diagnostics clear removes local history. Stored history is bounded to 1,000 events per server and seven days.']
 };
+export function helpPanel(page = 'chat') {
+  const [title, description] = PAGES[page] ?? PAGES.chat;
+  return { content: '', embeds: [new EmbedBuilder().setTitle(title).setDescription(description).setColor(0x2f3136)], components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId('help_page').setPlaceholder('Choose a documentation topic').addOptions(Object.entries(PAGES).map(([value,[label]]) => ({label,value}))))] };
+}
+export const helpCommand: Command = { data: new SlashCommandBuilder().setName('help').setDescription('Browse documentation and menu navigation'), async execute(i: ChatInputCommandInteraction) { await i.reply({ ...helpPanel(), ephemeral: true }); } };

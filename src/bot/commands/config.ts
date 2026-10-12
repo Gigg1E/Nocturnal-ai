@@ -29,6 +29,11 @@ const OWNER_ONLY_CONFIGS: Record<string, { description: string; type: string }> 
 // can edit these; they only affect that guild. Personality/system-prompt
 // isn't here anymore — that's per-user now, see /personality.
 const GUILD_CONFIGS: Record<string, { description: string; type: string }> = {
+  'casualChat.typingProtection': { description: 'Yield to human typing', type: 'boolean' },
+  'casualChat.turnSpacingMs': { description: 'Minimum group bot turn spacing in milliseconds', type: 'number' },
+  'casualChat.groupPauseMs': { description: 'Group pause in milliseconds', type: 'number' },
+  'casualChat.typingGraceMs': { description: 'Human typing grace in milliseconds', type: 'number' },
+  'casualChat.maxTurnWaitMs': { description: 'Maximum turn wait in milliseconds', type: 'number' },
   'bot.maxResponseLength': { description: 'Max response length', type: 'number' },
   'bot.maxChatsPerUser': { description: 'Max concurrent in-flight requests per user', type: 'number' },
   'tools.enabled': { description: 'Enable external tools', type: 'boolean' },
@@ -63,7 +68,9 @@ export const configCommand: Command = {
               { name: 'Rate Limits', value: 'rateLimit' },
               { name: 'Channels', value: 'channels' },
               { name: 'Users', value: 'users' },
-              { name: 'Logging', value: 'logging' }
+              { name: 'Logging', value: 'logging' },
+              { name: 'Answer Machine timing', value: 'casualChat' },
+              { name: 'Diagnostics', value: 'diagnostics' }
             )
         )
     )
@@ -136,6 +143,10 @@ function getViewableSection(section: string, globalConfig: Config, guildConfig: 
   switch (section) {
     case 'bot':
       return guildConfig.bot;
+    case 'casualChat':
+      return guildConfig.casualChat;
+    case 'diagnostics':
+      return guildConfig.diagnostics;
     case 'rateLimit':
       return guildConfig.rateLimit;
     case 'channels':
@@ -168,7 +179,7 @@ async function handleView(interaction: ChatInputCommandInteraction): Promise<voi
     });
   } else {
     // Show overview across both global and per-guild sections
-    const sections = ['bot', 'ollama', 'tools', 'rateLimit', 'channels', 'users', 'logging'];
+    const sections = ['bot', 'ollama', 'tools', 'rateLimit', 'channels', 'users', 'casualChat', 'diagnostics', 'logging'];
     const overview = sections
       .map((key) => {
         const sectionConfig = getViewableSection(key, globalConfig, guildConfig) as Record<string, unknown>;

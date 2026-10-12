@@ -1,4 +1,8 @@
 const NUMBER_RULES: Record<string, [number, number, boolean]> = {
+  'casualChat.turnSpacingMs': [0, 120000, true],
+  'casualChat.groupPauseMs': [0, 60000, true],
+  'casualChat.typingGraceMs': [0, 60000, true],
+  'casualChat.maxTurnWaitMs': [1000, 120000, true],
   'ollama.maxTokens': [1, 32768, true],
   'ollama.temperature': [0, 1, false],
   'ollama.topP': [0, 1, false],
@@ -19,7 +23,7 @@ export function parseSetting(key: string, input: string): string | number | bool
     }
     return value;
   }
-  if (key === 'tools.enabled') {
+  if ((key === 'tools.enabled' || key === 'casualChat.typingProtection')) {
     if (!/^(true|false)$/i.test(input.trim())) throw new Error('Expected true or false.');
     return input.trim().toLowerCase() === 'true';
   }

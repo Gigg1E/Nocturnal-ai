@@ -194,3 +194,5 @@ test('public guard rejects staged private files and credentials without echoing 
     return true;
   });
 });
+
+require('./conversations.test');

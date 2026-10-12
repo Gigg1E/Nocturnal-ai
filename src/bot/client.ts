@@ -1,3 +1,5 @@
+import { recordHumanTyping } from '../services/casualChat';
+import { initializeDiagnosticChannels } from '../services/diagnosticChannels';
 import {
   Client,
   GatewayIntentBits,
@@ -31,6 +33,7 @@ export function createClient(): BotClient {
       GatewayIntentBits.GuildMembers,
       // Answer Machine sees reactions as context (non-privileged intent).
       GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.GuildMessageTyping,
     ],
     partials: [
       Partials.Message,
@@ -50,6 +53,7 @@ export function createClient(): BotClient {
   client.once(Events.ClientReady, async (readyClient) => {
     logger.info(`Nocturnal is online as ${readyClient.user.tag}`);
     startStatusWatcher(readyClient);
+    initializeDiagnosticChannels(readyClient);
 
     // Reconcile against the allowlist on startup — guildCreate only catches a
     // guild being de-listed going forward (on new joins), not a guild the bot
@@ -79,6 +83,10 @@ export function createClient(): BotClient {
     }
   });
 
+  client.on(Events.TypingStart, typing => {
+    if (typing.user.bot || typing.user.id === client.user?.id) return;
+    recordHumanTyping(typing.channel.id, typing.user.id);
+  });
   client.on(Events.GuildCreate, handleGuildCreate);
   client.on(Events.MessageCreate, handleMessageCreate);
   client.on(Events.MessageUpdate, (oldMsg, newMsg) => {

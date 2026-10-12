@@ -7,7 +7,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { Command } from './index';
-import { loadGuildConfig, resolveHeat, HEAT_PRESET_LABELS } from '../../config/guildConfig';
+import { loadGuildConfig } from '../../config/guildConfig';
 
 // Bare command, no subcommands — shows current state plus a dropdown for
 // what to do next, matching the /memory and /personality pattern. Picking
@@ -17,7 +17,7 @@ import { loadGuildConfig, resolveHeat, HEAT_PRESET_LABELS } from '../../config/g
 export const channelCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('channel')
-    .setDescription('Manage channel restrictions and the Answer Machine (Admin only)')
+    .setDescription('Manage channel restrictions (Admin only)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   adminOnly: true,
 
@@ -40,23 +40,9 @@ export const channelCommand: Command = {
           value: config.channels.blocked.length
             ? config.channels.blocked.map((id) => `<#${id}>`).join(', ')
             : 'None',
-        },
-        {
-          name: 'Answer Machine channels',
-          value: config.casualChat.channels.length
-            ? config.casualChat.channels.map((id) => `<#${id}>`).join(', ')
-            : 'None (opt-in only)',
-        },
-        {
-          name: 'Answer Machine heat',
-          value: `${HEAT_PRESET_LABELS[config.casualChat.chattiness] ?? config.casualChat.chattiness} (${resolveHeat(config)})`,
-        },
-        {
-          name: 'Answer Machine GIFs & stickers',
-          value: config.casualChat.media ? 'On' : 'Off',
         }
       )
-      .setFooter({ text: 'Blocked always overrides allowed/Answer Machine for that channel. Answer Machine channels never use the regular chat-bot pipeline, even when mentioned.' });
+      .setFooter({ text: 'Blocked always overrides allowed/Answer Machine for that channel. Use /answer-machine for participation, timing and logs.' });
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId('channel_action')
@@ -66,15 +52,7 @@ export const channelCommand: Command = {
         { label: 'Disallow a channel', value: 'disallow', description: 'Remove from the allowed list' },
         { label: 'Block a channel', value: 'block', description: 'Bot never responds here at all' },
         { label: 'Unblock a channel', value: 'unblock', description: 'Remove from the blocked list' },
-        { label: 'Enable Answer Machine', value: 'casual_enable', description: 'Answers genuine questions & corrects misinformation here' },
-        { label: 'Disable Answer Machine', value: 'casual_disable', description: 'Remove from the Answer Machine' },
-        { label: 'Set Answer Machine heat', value: 'chattiness', description: 'How much it talks (TalksALot joins casual chat)' },
-        {
-          label: config.casualChat.media ? 'Turn off GIFs & stickers' : 'Turn on GIFs & stickers',
-          value: 'media_toggle',
-          description: 'Whether the Answer Machine can send GIFs and this server\'s stickers',
-        },
-        { label: 'Reset everything', value: 'reset', description: 'Clear all channel restrictions and the Answer Machine' }
+        { label: 'Reset channel restrictions', value: 'reset', description: 'Clear channel restrictions' }
       );
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);

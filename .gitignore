@@ -25,3 +25,6 @@ data/
 *.db-wal
 .agents/
 .codex/
+
+# Local review and planning documents (already tracked docs remain tracked)
+docs/
