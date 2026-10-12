@@ -21,14 +21,35 @@ Nocturnal has two ways of joining a conversation:
 
 ### Answer Machine
 - **Opt-in per channel.** No memory and no per-user history, just a short rolling view of the recent conversation.
-- **Decides for itself when to speak.** A fast model rates each moment: an open question, misinformation, something worth reacting to, or nothing.
-- **Adjustable chattiness ("heat").** `Low` and `Medium` only answer and correct. `High` and `TalksALot` also join casual conversation.
+- **Decides for itself when to speak.** A fast model rates each moment: an open question, misinformation, something worth reacting to, or nothing. It also recognizes when someone answers a question the bot asked, such as supplying a song title it requested.
+- **Heat from 0 to 100.** Heat controls how readily it participates. 0 is very selective, around 50 favors useful contributions, 80 is conversational and 100 participates often. Casual, unprompted chat only opens at 70 and above. Direct requests stay responsive at any heat.
+- **Takes turns in group conversations.** When several people are talking, it waits for a quiet moment, gathers the new messages into one turn, and leaves space between its own replies instead of answering every line.
+- **Waits for people who are typing.** If someone is still typing, it holds its turn for a short grace period. A maximum wait keeps it from being silenced indefinitely. This can be turned off per server.
+- **Drops outdated replies.** If someone answers the question while the bot is still writing, the draft is discarded and the conversation is reconsidered.
+- **Everyone gets a turn.** Separate direct requests from different people are queued and answered one by one. Relevant points from newcomers are considered as readily as those from regular partners.
 - **Reactions, GIFs and stickers.** It reacts with emojis, including the server's custom ones. GIFs and stickers are optional.
 - **Sees images and short clips** posted in the channel.
 - **Separate from chat mode.** A channel in Answer Machine mode never falls back to chat mode, even on a direct mention.
 
+Server admins manage all of this from the `/answer-machine` panel.
+
+| Timing setting | Default | Range |
+|---|---|---|
+| Group quiet pause | 4 s | 0–60 s |
+| Minimum spacing between the bot's group turns | 8 s | 0–120 s |
+| Typing grace | 8 s | 0–60 s |
+| Maximum quiet/typing wait | 15 s | 1–120 s |
+
+Turn spacing always applies, even past the maximum wait. In one-to-one conversations the bot uses a short pause instead of the group values.
+
+### Diagnostics (Answer Machine and chat mode)
+- **Opt-in log channel.** Admins can choose a channel where the bot posts a short record of each decision. Anyone who can see that channel can read the records.
+- **Metadata only.** Records include heat, scores and thresholds, the reason for speaking or staying quiet, timing, message IDs, reaction emojis, model call counts and tool success. They never include message text, prompts, model responses or tool queries and results.
+- **Private review.** `/diagnostics recent` shows recent events to the admin who runs it, and can be filtered to failures.
+- **Limited and per server.** Each server keeps at most 1,000 events from the last 7 days, and no server can see another's records. Collection can be turned off and stored events cleared at any time.
+
 ### Live data (both modes)
-When fresh information would make an answer correct or more relevant, Nocturnal looks it up. Each tool call shows a status line in chat, for example `✓ get_weather • 1.4s`.
+When fresh information would make an answer correct or more relevant, Nocturnal looks it up. In chat mode, each tool call shows a status line in chat, for example `✓ get_weather • 1.4s`. Answer Machine looks things up quietly; its tool activity appears in diagnostics instead.
 
 - Web search
 - Weather
@@ -54,7 +75,7 @@ The model decides when a lookup is worth it. "What's the weather today?" gets a 
 | [Ollama](https://ollama.com) | Model inference. Local or [cloud models](https://ollama.com/cloud) both work. |
 | [Ollama-Tools API](https://github.com/Gigg1E/Ollama-Tools) | Provides the live-data tools. Without it the bot still chats, but has no lookups. |
 | [ffmpeg](https://ffmpeg.org) (optional) | Lets Answer Machine see GIFs and short video clips frame by frame. Without it, it sees a single preview frame. |
-| A Discord application and bot token | From the [Discord Developer Portal](https://discord.com/developers/applications). Enable the **Message Content** and **Server Members** privileged intents. |
+| A Discord application and bot token | From the [Discord Developer Portal](https://discord.com/developers/applications). Enable the **Message Content** and **Server Members** privileged intents. The bot also uses the non-privileged message typing intent, which needs no portal setting. |
 
 ### Models
 
@@ -126,7 +147,7 @@ Configuration has three layers:
 | Layer | Where | Who controls it | What's in it |
 |---|---|---|---|
 | Global | `config.json` | Bot host | Default personality (`bot.systemPrompt`), chat model and generation settings, logging, conversation history length |
-| Per server | `data/guilds/<guildId>/config.json` | That server's admins, via `/config` and `/channel` | Allowed and blocked channels, Answer Machine channels and heat, GIFs and stickers, rate limits, tools on/off, user blacklist |
+| Per server | `data/guilds/<guildId>/` | That server's admins, via `/answer-machine`, `/channel`, `/config` and `/diagnostics` | Allowed and blocked channels, Answer Machine channels, heat, turn timing, typing protection, GIFs and stickers, diagnostics settings and recent events, rate limits, tools on/off, user blacklist |
 | Per user | SQLite (`data/net.db`) | Each user, via `/personality` and `/memory` | Custom personality, remembered facts, usage and rate-limit tracking |
 
 Server and user data are created automatically and kept out of git. Keep credentials in `.env`; review staged changes and run `npm run check:public` before publishing. This check does not audit existing Git history.
@@ -139,12 +160,14 @@ Use `rateLimit.cooldownMs` for the chat cooldown. Legacy `bot.responseFormat`, `
 
 | Command | Who | What it does |
 |---|---|---|
-| `/help` | Everyone | How to use Nocturnal |
+| `/help` | Everyone | Browsable guide to chatting, menus, Answer Machine, administration and diagnostics |
 | `/personality` | Everyone | View, set or reset how Nocturnal talks to you |
 | `/memory` | Everyone | See what Nocturnal remembers about you, and forget entries |
 | `/clearchat` | Everyone | Start the conversation fresh (keeps memory and personality) |
-| `/channel` | Admins | Allowed and blocked channels, Answer Machine channels, heat, GIFs and stickers |
-| `/config` | Admins | View and change this server's settings |
+| `/answer-machine` | Admins | Panel for Answer Machine channels, heat, turn timing, typing protection, GIFs and stickers, and the diagnostics log channel |
+| `/channel` | Admins | Allowed and blocked channels for mentions and replies. Blocked always wins, including over Answer Machine |
+| `/diagnostics` | Admins | Set or clear the log channel, view recent events privately, turn collection on or off, clear stored events |
+| `/config` | Admins | View and change this server's advanced settings |
 | `/blacklist` | Admins | Block users from talking to the bot |
 | `/stats` | Admins | Usage statistics |
 | `/status` | Admins | Live health check of every tool endpoint |
@@ -162,7 +185,9 @@ Discord ──► discord.js client
               │    personality + memory + per-user history
               │
               ├─ Answer Machine ────► Ollama (fast model)
-              │    rolling channel buffer → decide → reply / react
+              │    rolling channel buffer → wait for turn → decide → reply / react
+              │
+              ├─ Diagnostics ───────► per-server event store + optional log channel
               │
               ├─ Tool calls (both) ──► Ollama-Tools API   (search, weather, time, geo, crypto)
               ├─ /webhook ───────────► Notifications service (optional)
