@@ -172,7 +172,9 @@ The bot doesn't implement tools itself. Every lookup is an HTTP call to the Tool
 ---
 ## Roadmap
 
-Not to much is planned to be added feature wise. I plan on looking into organization and simplicity to use the bot in servers. My main focus is the logic flow of the *Answer Machine* mode (might be renames tbh).
+Not to much is planned to be added feature wise. Primary focus is to building on what is already in the project.
+
+I plan on looking into organization and simplicity to use the bot in servers. My main focus is the logic flow of the *Answer Machine* mode (might be renames tbh).
 
 If you want to see anything added to the bot: **features**, **logic flows**, **compatibility**, **etc**. You can join the Discord [Sable](https://discord.gg/HEA7Z2eQwd). Check under the **Projects post** section for the *pinned* post.  
 
