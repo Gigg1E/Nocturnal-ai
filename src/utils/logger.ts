@@ -2,13 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as winston from 'winston';
 
-const LOG_DIR = path.join(process.cwd(), 'logs');
-
-// Ensure logs directory exists
-if (!fs.existsSync(LOG_DIR)) {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-}
-
 const customFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
@@ -35,26 +28,21 @@ const consoleFormat = winston.format.combine(
 export const logger = winston.createLogger({
   level: 'info',
   format: customFormat,
-  transports: [
-    // Console output
-    new winston.transports.Console({
-      format: consoleFormat,
-    }),
-    // Combined log file
-    new winston.transports.File({
-      filename: path.join(LOG_DIR, 'combined.log'),
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
-    // Error log file
-    new winston.transports.File({
-      filename: path.join(LOG_DIR, 'error.log'),
-      level: 'error',
-      maxsize: 5242880,
-      maxFiles: 5,
-    }),
-  ],
+  transports: [new winston.transports.Console({ format: consoleFormat })],
 });
+
+export function configureLogging(config: { level: string; logToFile: boolean; logDirectory: string }): void {
+  const transports: winston.transport[] = [new winston.transports.Console({ format: consoleFormat })];
+  if (config.logToFile) {
+    const directory = path.resolve(config.logDirectory);
+    fs.mkdirSync(directory, { recursive: true });
+    transports.push(
+      new winston.transports.File({ filename: path.join(directory, 'combined.log'), maxsize: 5242880, maxFiles: 5 }),
+      new winston.transports.File({ filename: path.join(directory, 'error.log'), level: 'error', maxsize: 5242880, maxFiles: 5 }),
+    );
+  }
+  logger.configure({ level: config.level, format: customFormat, transports });
+}
 
 // Specialized loggers for different concerns
 export function logConfigChange(key: string, oldValue: unknown, newValue: unknown, userId: string): void {

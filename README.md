@@ -111,6 +111,8 @@ npm run build
 npm start
 ```
 
+Install the rendering browser once with `npx playwright install chromium`. Run the bot as an unprivileged user with Chromium sandbox support; if rendering cannot start, text replies still work.
+
 Use `npm run dev` to run straight from source during development. For a long-running deployment, a process manager like [PM2](https://pm2.keymetrics.io) works well. Rebuild with `npm run build` before restarting after any change.
 
 Slash commands register automatically for every allowlisted server at startup. No separate deploy step is needed.
@@ -127,7 +129,9 @@ Configuration has three layers:
 | Per server | `data/guilds/<guildId>/config.json` | That server's admins, via `/config` and `/channel` | Allowed and blocked channels, Answer Machine channels and heat, GIFs and stickers, rate limits, tools on/off, user blacklist |
 | Per user | SQLite (`data/net.db`) | Each user, via `/personality` and `/memory` | Custom personality, remembered facts, usage and rate-limit tracking |
 
-Server and user data are created automatically and kept out of git.
+Server and user data are created automatically and kept out of git. Keep credentials in `.env`; review staged changes and run `npm run check:public` before publishing. This check does not audit existing Git history.
+
+Use `rateLimit.cooldownMs` for the chat cooldown. Legacy `bot.responseFormat`, `bot.cooldownSeconds`, and `tools.triggerThreshold` fields remain readable for compatibility but are no longer offered as editable settings because the active pipelines do not use them.
 
 ---
 

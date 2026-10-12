@@ -146,6 +146,7 @@ export async function runAgentLoop(
 ): Promise<string> {
   const tools = toolsEnabled ? TOOL_SCHEMAS : [];
   let totalFailures = 0;
+  let toolCalls = 0;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const response = await generateChat({ messages, tools: tools.length > 0 ? tools : undefined, model });
@@ -165,10 +166,19 @@ export async function runAgentLoop(
 
     // Execute each requested tool
     for (const tc of msg.tool_calls) {
+      if (++toolCalls > MAX_STEPS || totalFailures >= MAX_FAILURES) break;
       const toolName = tc.function.name;
       const rawArgs = tc.function.arguments;
-      const args: Record<string, unknown> =
-        typeof rawArgs === 'string' ? JSON.parse(rawArgs) : (rawArgs as Record<string, unknown>);
+      let args: Record<string, unknown>;
+      try {
+        const parsed = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid arguments');
+        args = parsed as Record<string, unknown>;
+      } catch {
+        totalFailures++;
+        messages.push({ role: 'tool', content: JSON.stringify({ error: 'Invalid tool arguments' }) });
+        continue;
+      }
 
       if (callbacks?.onToolStart) {
         await callbacks.onToolStart(toolName, args);
@@ -176,7 +186,9 @@ export async function runAgentLoop(
 
       let resultContent: string;
       try {
-        const result = await dispatchTool(toolName, args);
+        const result = toolsEnabled
+          ? await dispatchTool(toolName, args)
+          : { success: false, error: 'Tools are disabled' };
         resultContent = JSON.stringify(result.success ? result.data : { error: result.error });
         if (!result.success) totalFailures++;
       } catch (err) {
@@ -191,8 +203,8 @@ export async function runAgentLoop(
       messages.push({ role: 'tool', content: resultContent });
     }
 
-    if (totalFailures >= MAX_FAILURES) {
-      logger.warn(`Agent failure budget reached (${totalFailures} failures)`);
+    if (totalFailures >= MAX_FAILURES || toolCalls >= MAX_STEPS) {
+      logger.warn(`Agent budget reached (${totalFailures} failures, ${toolCalls} tool calls)`);
       messages.push({
         role: 'user',
         content: 'Some tools failed. Answer with what you have or let the user know.',
@@ -245,6 +257,7 @@ export async function processMessage(
 
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
   try {
+    updateRateLimit(userId, guildId);
     const context: OllamaMessage[] = [
       { role: 'system', content: systemPrompt(userId, config.tools.enabled) },
     ];
@@ -260,12 +273,11 @@ export async function processMessage(
 
     const formatted = await formatResponse(aiContent);
     addToHistory(userId, guildId, mentionContent, aiContent);
-    updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'message');
     logBotUsage(userId, 'message', { hasImage });
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
-    const parts = buildOutgoingMessages(formatted.segments);
+    const parts = buildOutgoingMessages(formatted.segments, config.bot.maxResponseLength);
     return { success: true, parts };
   } catch (error) {
     logger.error('Error processing message:', error);
@@ -313,6 +325,7 @@ export async function processReply(
 
   inFlightCounts.set(concurrencyKey, (inFlightCounts.get(concurrencyKey) ?? 0) + 1);
   try {
+    updateRateLimit(userId, guildId);
     const context: OllamaMessage[] = [
       { role: 'system', content: systemPrompt(userId, config.tools.enabled) },
     ];
@@ -356,12 +369,11 @@ export async function processReply(
 
     const formatted = await formatResponse(aiContent);
     addToHistory(userId, guildId, mentionContent, aiContent);
-    updateRateLimit(userId, guildId);
     trackUsage(userId, guildId, 'reply');
     logBotUsage(userId, 'reply', { hasImage });
     maybeExtractMemory(userId, mentionContent).catch(() => {});
 
-    const parts = buildOutgoingMessages(formatted.segments);
+    const parts = buildOutgoingMessages(formatted.segments, config.bot.maxResponseLength);
     return { success: true, parts };
   } catch (error) {
     logger.error('Error processing reply:', error);

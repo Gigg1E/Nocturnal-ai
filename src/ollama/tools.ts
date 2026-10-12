@@ -1,5 +1,8 @@
+import { boundedFetch as timedFetch } from '../utils/http';
 import { logger, logToolCall } from '../utils/logger';
 import { ToolDefinition } from './client';
+
+const boundedFetch = (url: string, init?: RequestInit) => timedFetch(url, init, 15_000);
 
 const TOOLS_API_HOST = process.env.TOOLS_API_HOST || 'http://localhost:3100';
 
@@ -195,7 +198,7 @@ export async function dispatchTool(name: string, args: Record<string, unknown>):
 export async function searchWeb(query: string, numResults: number = 5): Promise<ToolResult> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/api/search`, {
+    const response = await boundedFetch(`${TOOLS_API_HOST}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, num_results: numResults }),
@@ -214,7 +217,7 @@ export async function searchWeb(query: string, numResults: number = 5): Promise<
 export async function getWeather(location: string): Promise<ToolResult> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/api/weather/${encodeURIComponent(location)}`);
+    const response = await boundedFetch(`${TOOLS_API_HOST}/api/weather/${encodeURIComponent(location)}`);
     if (!response.ok) throw new Error(`Weather API error: ${response.status}`);
     const data = await response.json();
     logToolCall('weather', { location }, true, Date.now() - startTime);
@@ -229,7 +232,7 @@ export async function getWeather(location: string): Promise<ToolResult> {
 export async function getTimezone(timezone: string): Promise<ToolResult> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/api/timezone/${encodeURIComponent(timezone)}`);
+    const response = await boundedFetch(`${TOOLS_API_HOST}/api/timezone/${encodeURIComponent(timezone)}`);
     if (!response.ok) throw new Error(`Timezone API error: ${response.status}`);
     const data = await response.json();
     logToolCall('timezone', { timezone }, true, Date.now() - startTime);
@@ -244,7 +247,7 @@ export async function getTimezone(timezone: string): Promise<ToolResult> {
 export async function getCurrentTime(): Promise<ToolResult> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/api/time`);
+    const response = await boundedFetch(`${TOOLS_API_HOST}/api/time`);
     if (!response.ok) throw new Error(`Time API error: ${response.status}`);
     const data = await response.json();
     logToolCall('time', {}, true, Date.now() - startTime);
@@ -259,7 +262,7 @@ export async function getCurrentTime(): Promise<ToolResult> {
 export async function geocode(location: string): Promise<ToolResult> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/api/geocode/${encodeURIComponent(location)}`);
+    const response = await boundedFetch(`${TOOLS_API_HOST}/api/geocode/${encodeURIComponent(location)}`);
     if (!response.ok) throw new Error(`Geocode API error: ${response.status}`);
     const data = await response.json();
     logToolCall('geocode', { location }, true, Date.now() - startTime);
@@ -274,7 +277,7 @@ export async function geocode(location: string): Promise<ToolResult> {
 export async function reverseGeocode(lat: number, lon: number): Promise<ToolResult> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/api/reverse-geocode/${lat}/${lon}`);
+    const response = await boundedFetch(`${TOOLS_API_HOST}/api/reverse-geocode/${lat}/${lon}`);
     if (!response.ok) throw new Error(`Reverse geocode API error: ${response.status}`);
     const data = await response.json();
     logToolCall('reverse-geocode', { lat, lon }, true, Date.now() - startTime);
@@ -289,7 +292,7 @@ export async function reverseGeocode(lat: number, lon: number): Promise<ToolResu
 export async function getCryptoPrice(symbol: string): Promise<ToolResult> {
   const startTime = Date.now();
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/api/crypto/${encodeURIComponent(symbol)}`);
+    const response = await boundedFetch(`${TOOLS_API_HOST}/api/crypto/${encodeURIComponent(symbol)}`);
     if (!response.ok) throw new Error(`Crypto API error: ${response.status}`);
     const data = await response.json();
     logToolCall('crypto', { symbol }, true, Date.now() - startTime);
@@ -304,7 +307,7 @@ export async function getCryptoPrice(symbol: string): Promise<ToolResult> {
 
 export async function checkToolsApiConnection(): Promise<boolean> {
   try {
-    const response = await fetch(`${TOOLS_API_HOST}/health`);
+    const response = await boundedFetch(`${TOOLS_API_HOST}/health`);
     return response.ok;
   } catch {
     return false;
@@ -319,7 +322,7 @@ async function probeEndpoint(
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...options, signal: ctrl.signal as RequestInit['signal'] });
+    const res = await boundedFetch(url, { ...options, signal: ctrl.signal as RequestInit['signal'] });
     clearTimeout(timer);
     return { ok: res.ok, error: res.ok ? undefined : `HTTP ${res.status}` };
   } catch (err) {

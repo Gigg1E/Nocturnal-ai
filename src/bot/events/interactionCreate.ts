@@ -126,6 +126,11 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
 
   logger.info(`Select: ${action} by ${interaction.user.tag}`);
 
+  if (action.startsWith('channel_') && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'This requires Administrator permission in this server.', ephemeral: true });
+    return;
+  }
+
   switch (action) {
     case 'memory_action':
       await handleMemoryActionSelect(interaction);
@@ -167,6 +172,10 @@ async function handleChannelSelectMenu(interaction: ChannelSelectMenuInteraction
     await interaction.reply({ content: 'Action not available.', ephemeral: true });
     return;
   }
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'This requires Administrator permission in this server.', ephemeral: true });
+    return;
+  }
   await handleChannelPick(interaction, op);
 }
 
@@ -177,7 +186,7 @@ async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<v
 
   switch (action) {
     case 'config_edit':
-      await handleConfigEditModal(interaction, params[0]);
+      await interaction.reply({ content: 'This editor has been retired. Use /config set.', ephemeral: true });
       break;
     case 'memory_add_modal':
       await handleMemoryAddModal(interaction);
@@ -449,47 +458,5 @@ async function handleChannelPick(interaction: ChannelSelectMenuInteraction, op: 
       break;
     default:
       await interaction.reply({ content: 'Action not available.', ephemeral: true });
-  }
-}
-
-// ==================== /config modal handler (existing) ====================
-import { updateConfig, getConfig } from '../../config';
-import { logConfigChange } from '../../utils/logger';
-
-async function handleConfigEditModal(interaction: ModalSubmitInteraction, configPath: string): Promise<void> {
-  const newValue = interaction.fields.getTextInputValue('value');
-
-  try {
-    const [section, key] = configPath.split('.');
-    const config = getConfig();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const oldValue = (config as any)[section]?.[key];
-
-    // Try to parse as JSON if it looks like it
-    let parsedValue: unknown = newValue;
-    try {
-      parsedValue = JSON.parse(newValue);
-    } catch {
-      // Keep as string if not valid JSON
-    }
-
-    updateConfig(
-      section as keyof typeof config,
-      key as never,
-      parsedValue as never
-    );
-
-    logConfigChange(configPath, oldValue, parsedValue, interaction.user.id);
-
-    await interaction.reply({
-      content: `Updated: \`${configPath}\` = \`${JSON.stringify(parsedValue)}\``,
-      ephemeral: true,
-    });
-  } catch (error) {
-    logger.error('Failed to update config:', error);
-    await interaction.reply({
-      content: 'Failed to update.',
-      ephemeral: true,
-    });
   }
 }

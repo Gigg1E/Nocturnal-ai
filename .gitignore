@@ -13,3 +13,15 @@ data/status.json
 
 # Local Claude Code settings
 .claude/
+
+# Private environment variants, backups, and local agent configuration
+.env.*
+!.env.example
+data/
+*.pem
+*.key
+*.db
+*.db-shm
+*.db-wal
+.agents/
+.codex/

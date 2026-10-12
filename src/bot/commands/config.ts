@@ -1,3 +1,4 @@
+import { parseSetting } from '../../config/validation';
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
@@ -28,12 +29,9 @@ const OWNER_ONLY_CONFIGS: Record<string, { description: string; type: string }> 
 // can edit these; they only affect that guild. Personality/system-prompt
 // isn't here anymore — that's per-user now, see /personality.
 const GUILD_CONFIGS: Record<string, { description: string; type: string }> = {
-  'bot.responseFormat': { description: 'Response format (text/embed)', type: 'string' },
   'bot.maxResponseLength': { description: 'Max response length', type: 'number' },
   'bot.maxChatsPerUser': { description: 'Max concurrent in-flight requests per user', type: 'number' },
-  'bot.cooldownSeconds': { description: 'Cooldown between messages', type: 'number' },
   'tools.enabled': { description: 'Enable external tools', type: 'boolean' },
-  'tools.triggerThreshold': { description: 'Tool trigger threshold', type: 'number' },
   'rateLimit.cooldownMs': { description: 'Cooldown in milliseconds', type: 'number' },
   'rateLimit.maxRequestsPerMinute': { description: 'Max requests per minute', type: 'number' },
   'rateLimit.maxRequestsPerHour': { description: 'Max requests per hour', type: 'number' },
@@ -219,22 +217,10 @@ async function handleSet(interaction: ChatInputCommandInteraction): Promise<void
   // Parse value based on type
   let parsedValue: unknown;
   try {
-    switch (configInfo.type) {
-      case 'number':
-        parsedValue = parseFloat(valueStr);
-        if (isNaN(parsedValue as number)) {
-          throw new Error('Invalid number');
-        }
-        break;
-      case 'boolean':
-        parsedValue = valueStr.toLowerCase() === 'true';
-        break;
-      default:
-        parsedValue = valueStr;
-    }
-  } catch {
+    parsedValue = parseSetting(key, valueStr);
+  } catch (error) {
     await interaction.reply({
-      content: `Invalid value for ${configInfo.type} type.`,
+      content: (error as Error).message,
       ephemeral: true,
     });
     return;

@@ -7,7 +7,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "watch": "tsc -w"
+    "watch": "tsc -w",
+    "test": "npm run build && node tests/hardening.test.js",
+    "check:public": "node scripts/check-public.js"
   },
   "keywords": [
     "discord",

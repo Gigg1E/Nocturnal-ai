@@ -1,5 +1,10 @@
 import { getDatabase } from '../database/schema';
 
+// Increment even when clearing an empty store: pending extraction must be invalidated.
+const revisions = new Map<string, number>();
+export function memoryRevision(userId: string): number { return revisions.get(userId) ?? 0; }
+function markChanged(userId: string): void { revisions.set(userId, memoryRevision(userId) + 1); }
+
 export const MAX_MEMORY_SLOTS = 10;
 export const MAX_FACT_LENGTH = 150;
 
@@ -33,6 +38,7 @@ export function recordMemoryFact(userId: string, fact: string, replaceSlot?: num
     reordered.forEach((f, i) => insert.run(userId, i + 1, f));
   });
   tx();
+  markChanged(userId);
 }
 
 export function forgetUserMemorySlot(userId: string, slot: number): void {
@@ -48,11 +54,13 @@ export function forgetUserMemorySlot(userId: string, slot: number): void {
     }
   });
   tx();
+  markChanged(userId);
 }
 
 export function clearUserMemory(userId: string): void {
   const db = getDatabase();
   db.prepare('DELETE FROM user_memory WHERE user_id = ?').run(userId);
+  markChanged(userId);
 }
 
 // Quiet background-context block appended to the system prompt. Deliberately

@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { logger } from '../utils/logger';
+import { logger, configureLogging } from '../utils/logger';
 
 export interface BotConfig {
   name: string;
@@ -99,6 +99,7 @@ export function loadConfig(): Config {
   try {
     const configData = fs.readFileSync(CONFIG_PATH, 'utf-8');
     currentConfig = JSON.parse(configData) as Config;
+    configureLogging(currentConfig.logging);
     return currentConfig;
   } catch (error) {
     console.error('Failed to load config:', error);
@@ -117,6 +118,7 @@ export function saveConfig(config: Config): void {
   try {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
     currentConfig = config;
+    configureLogging(config.logging);
     logger.info('Configuration saved successfully');
   } catch (error) {
     logger.error('Failed to save config:', error);
@@ -133,7 +135,7 @@ export function updateConfig<K extends keyof Config>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (config[section] as any)[key as string] = value;
   saveConfig(config);
-  logger.info(`Config updated: ${section}.${String(key)} = ${JSON.stringify(value)}`);
+  logger.info(`Config updated: ${section}.${String(key)}`);
 }
 
 export function getConfigValue<K extends keyof Config>(

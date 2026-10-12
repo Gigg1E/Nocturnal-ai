@@ -14,6 +14,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { boundedFetch } from '../../utils/http';
 import { Command } from './index';
 import { logger } from '../../utils/logger';
 
@@ -21,13 +22,12 @@ const WEBHOOK_API_HOST = process.env.WEBHOOK_API_HOST || 'http://localhost:3200'
 
 // Light fetch wrapper — avoids adding a new dependency
 async function webhookApi(method: string, path: string, body?: unknown) {
-  const fetch = (await import('node-fetch')).default;
   const url = `${WEBHOOK_API_HOST}${path}`;
-  const res = await fetch(url, {
+  const res = await boundedFetch(url, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  }, 15_000);
   const data = await res.json() as Record<string, unknown>;
   if (!res.ok) throw new Error((data.error as string) || `HTTP ${res.status}`);
   return data;

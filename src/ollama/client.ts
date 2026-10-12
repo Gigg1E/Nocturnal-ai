@@ -1,3 +1,4 @@
+import { boundedFetch } from '../utils/http';
 import { getConfig } from '../config';
 import { logger } from '../utils/logger';
 
@@ -82,7 +83,7 @@ export async function generateChat(options: OllamaGenerateOptions): Promise<Olla
   }
 
   try {
-    const response = await fetch(`${OLLAMA_HOST}/api/chat`, {
+    const response = await boundedFetch(`${OLLAMA_HOST}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -92,7 +93,11 @@ export async function generateChat(options: OllamaGenerateOptions): Promise<Olla
       throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
     }
 
-    return await response.json() as OllamaResponse;
+    const data = await response.json() as OllamaResponse & { error?: string };
+    if (data.error || !data.message || typeof data.message.content !== 'string') {
+      throw new Error('Ollama returned an invalid or failed chat response');
+    }
+    return data;
   } catch (error) {
     logger.error('Ollama generate error:', error);
     throw error;
@@ -101,7 +106,7 @@ export async function generateChat(options: OllamaGenerateOptions): Promise<Olla
 
 export async function listModels(): Promise<string[]> {
   try {
-    const response = await fetch(`${OLLAMA_HOST}/api/tags`);
+    const response = await boundedFetch(`${OLLAMA_HOST}/api/tags`);
     if (!response.ok) throw new Error(`Failed to list models: ${response.status}`);
     const data = await response.json() as { models: Array<{ name: string }> };
     return data.models.map((m) => m.name);
@@ -113,7 +118,7 @@ export async function listModels(): Promise<string[]> {
 
 export async function checkOllamaConnection(): Promise<boolean> {
   try {
-    const response = await fetch(`${OLLAMA_HOST}/api/tags`);
+    const response = await boundedFetch(`${OLLAMA_HOST}/api/tags`);
     return response.ok;
   } catch {
     return false;
@@ -122,7 +127,8 @@ export async function checkOllamaConnection(): Promise<boolean> {
 
 export async function imageUrlToBase64(url: string): Promise<string> {
   try {
-    const response = await fetch(url);
+    const response = await boundedFetch(url);
+    if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer).toString('base64');
   } catch (error) {

@@ -1,3 +1,4 @@
+import { boundedFetch } from '../utils/http';
 import { logger } from '../utils/logger';
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
@@ -31,7 +32,7 @@ export async function extractEntities(message: string): Promise<ExtractedEntitie
   const startTime = Date.now();
 
   try {
-    const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
+    const response = await boundedFetch(`${OLLAMA_HOST}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -121,7 +122,7 @@ export async function extractEntities(message: string): Promise<ExtractedEntitie
 // Check if the extractor model is available
 export async function checkExtractorModel(): Promise<boolean> {
   try {
-    const response = await fetch(`${OLLAMA_HOST}/api/tags`);
+    const response = await boundedFetch(`${OLLAMA_HOST}/api/tags`);
     if (!response.ok) return false;
 
     const data = await response.json() as { models?: Array<{ name: string }> };

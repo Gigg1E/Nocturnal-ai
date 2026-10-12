@@ -717,9 +717,10 @@ const MAX_OUTGOING_MESSAGES = 6;
  * into several text-only chunks first, with the attachment riding along on
  * the last one (closest to where it was actually referenced).
  */
-export function buildOutgoingMessages(segments: FormattedSegment[]): OutgoingMessage[] {
+export function buildOutgoingMessages(segments: FormattedSegment[], responseLimit?: number): OutgoingMessage[] {
   const config = getConfig();
-  const maxLength = config.bot.maxResponseLength;
+  const requestedLimit = responseLimit ?? config.bot.maxResponseLength;
+  const maxLength = Number.isFinite(requestedLimit) ? Math.max(100, Math.min(1999, Math.floor(requestedLimit))) : 1999;
 
   interface Group { text: string; attachment?: Attachment }
   const groups: Group[] = [];

@@ -1,5 +1,6 @@
+import { boundedFetch } from '../utils/http';
 import { logger } from '../utils/logger';
-import { getUserMemoryFacts, recordMemoryFact, MAX_FACT_LENGTH } from './memory';
+import { getUserMemoryFacts, recordMemoryFact, MAX_FACT_LENGTH, memoryRevision } from './memory';
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
 // Was qwen2.5:1.5b (the same tiny local model used for tool-routing entity
@@ -37,6 +38,7 @@ export async function maybeExtractMemory(userId: string, message: string): Promi
   if (!message || message.length > 800 || !SELF_REFERENTIAL.test(message)) return;
 
   try {
+    const revision = memoryRevision(userId);
     const existing = getUserMemoryFacts(userId);
     const existingList = existing.length
       ? existing.map((f) => `${f.slot}. ${f.fact}`).join('\n')
@@ -44,7 +46,7 @@ export async function maybeExtractMemory(userId: string, message: string): Promi
 
     const prompt = `${PROMPT_HEADER}\n\nExisting facts:\n${existingList}\n\nLatest message: "${message}"\n\nResponse:`;
 
-    const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
+    const response = await boundedFetch(`${OLLAMA_HOST}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -62,7 +64,7 @@ export async function maybeExtractMemory(userId: string, message: string): Promi
     const data = (await response.json()) as { response?: string };
     const line = (data.response ?? '').trim().split('\n')[0] ?? '';
 
-    if (!line || /^NONE\b/i.test(line)) return;
+    if (!line || /^NONE\b/i.test(line) || memoryRevision(userId) !== revision) return;
 
     const updateMatch = line.match(/^UPDATE\s+(\d+)\s*:\s*(.+)$/i);
     const newMatch = line.match(/^NEW\s*:\s*(.+)$/i);
@@ -72,13 +74,13 @@ export async function maybeExtractMemory(userId: string, message: string): Promi
       const fact = updateMatch[2].trim().substring(0, MAX_FACT_LENGTH);
       if (fact && existing.some((f) => f.slot === slot)) {
         recordMemoryFact(userId, fact, slot);
-        logger.debug(`Memory updated for ${userId}: slot ${slot} -> "${fact}"`);
+        logger.debug('Memory updated');
       }
     } else if (newMatch) {
       const fact = newMatch[1].trim().substring(0, MAX_FACT_LENGTH);
       if (fact) {
         recordMemoryFact(userId, fact);
-        logger.debug(`Memory added for ${userId}: "${fact}"`);
+        logger.debug('Memory added');
       }
     }
   } catch (error) {

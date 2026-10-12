@@ -112,7 +112,7 @@ function guildConfigPath(guildId: string): string {
 }
 
 function deepMerge<T>(base: T, override: Partial<T>): T {
-  const result = { ...base } as T;
+  const result = structuredClone(base) as T;
   for (const key of Object.keys(override) as (keyof T)[]) {
     const overrideVal = override[key];
     const baseVal = base[key];
@@ -134,7 +134,7 @@ export function loadGuildConfig(guildId: string): GuildConfig {
     const override = JSON.parse(raw) as Partial<GuildConfig>;
     return deepMerge(DEFAULT_GUILD_CONFIG, override);
   } catch {
-    return { ...DEFAULT_GUILD_CONFIG };
+    return structuredClone(DEFAULT_GUILD_CONFIG);
   }
 }
 

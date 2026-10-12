@@ -1,3 +1,4 @@
+import { boundedFetch } from '../utils/http';
 import { TextChannel, NewsChannel, ThreadChannel, DMChannel, Message, MessageCreateOptions, MessageReplyOptions, Sticker } from 'discord.js';
 import { getConfig } from '../config';
 import { loadGuildConfig, resolveHeat } from '../config/guildConfig';
@@ -382,7 +383,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 async function fetchImage(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const res = await boundedFetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     if (Number(res.headers.get('content-length') ?? 0) > MAX_IMAGE_BYTES) return null;
     const buf = Buffer.from(await res.arrayBuffer());
@@ -479,7 +480,7 @@ async function decideEngagement(
   if (images.length) body.images = images;
 
   const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
-  const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
+  const response = await boundedFetch(`${OLLAMA_HOST}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -527,7 +528,7 @@ Each attached image is one candidate GIF, shown as a 2x2 grid of its frames in o
 Reply with ONLY a JSON object, no code fences: {"pick": <candidate number, or 0 if none fit>}`;
   try {
     const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
-    const res = await fetch(`${OLLAMA_HOST}/api/generate`, {
+    const res = await boundedFetch(`${OLLAMA_HOST}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

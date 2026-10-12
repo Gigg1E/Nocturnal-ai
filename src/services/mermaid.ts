@@ -2,17 +2,16 @@ import { chromium, Browser, Page } from 'playwright';
 import { logger } from '../utils/logger';
 
 let browser: Browser | null = null;
+let launching: Promise<Browser> | null = null;
+const MERMAID_SCRIPT = require.resolve('mermaid/dist/mermaid.min.js');
 
 /**
  * Initialize the browser instance for mermaid rendering
  */
 async function getBrowser(): Promise<Browser> {
   if (!browser) {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-    logger.info('Playwright browser initialized for mermaid rendering');
+    launching ??= chromium.launch({ headless: true, chromiumSandbox: true });
+    try { browser = await launching; } finally { launching = null; }
   }
   return browser;
 }
@@ -37,6 +36,7 @@ export async function renderMermaidToImage(mermaidCode: string): Promise<Buffer 
   try {
     const browserInstance = await getBrowser();
     page = await browserInstance.newPage();
+    await page.route('**/*', (route) => route.abort());
 
     // Set viewport for consistent rendering
     await page.setViewportSize({ width: 1200, height: 800 });
@@ -47,7 +47,7 @@ export async function renderMermaidToImage(mermaidCode: string): Promise<Buffer 
 <html>
 <head>
   <meta charset="utf-8">
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
   <style>
     body {
       background: #2f3136;
@@ -74,9 +74,17 @@ export async function renderMermaidToImage(mermaidCode: string): Promise<Buffer 
 ${escapeHtml(mermaidCode)}
     </div>
   </div>
-  <script>
-    mermaid.initialize({
-      startOnLoad: true,
+
+</body>
+</html>`;
+
+    // Load the HTML
+    await page.setContent(html, { waitUntil: 'networkidle' });
+
+    await page.addScriptTag({ path: MERMAID_SCRIPT });
+    await page.evaluate((options) => (globalThis as any).mermaid.initialize(options), {
+      startOnLoad: false,
+      securityLevel: 'strict',
       theme: 'dark',
       themeVariables: {
         primaryColor: '#5865F2',
@@ -106,12 +114,7 @@ ${escapeHtml(mermaidCode)}
         messageMargin: 35
       }
     });
-  </script>
-</body>
-</html>`;
-
-    // Load the HTML
-    await page.setContent(html, { waitUntil: 'networkidle' });
+    await page.evaluate(() => (globalThis as any).mermaid.run());
 
     // Wait for mermaid to render
     await page.waitForSelector('.mermaid svg', { timeout: 10000 });
@@ -156,6 +159,7 @@ export async function renderTableToImage(markdownTable: string): Promise<Buffer 
 
     const browserInstance = await getBrowser();
     page = await browserInstance.newPage();
+    await page.route('**/*', (route) => route.abort());
     await page.setViewportSize({ width: 1200, height: 800 });
 
     const headerHtml = headers.map((h) => `<th>${mdCellToHtml(h)}</th>`).join('');
@@ -303,20 +307,9 @@ export function validateMermaidSyntax(code: string): boolean {
  * Escape HTML entities to prevent XSS in mermaid code
  */
 function escapeHtml(text: string): string {
-  const htmlEntities: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;',
-  };
-
-  // Don't escape mermaid-specific syntax that uses these characters
-  // Only escape in text content, not in syntax
-  return text
-    .replace(/&(?!amp;|lt;|gt;|quot;|#039;)/g, '&amp;')
-    .replace(/<(?![-a-zA-Z])/g, '&lt;')
-    .replace(/(?<![a-zA-Z-])>/g, '&gt;');
+  return text.replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
+  }[char]!));
 }
 
 /**
