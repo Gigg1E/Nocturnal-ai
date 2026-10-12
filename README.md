@@ -168,7 +168,13 @@ Discord ──► discord.js client
 
 The bot doesn't implement tools itself. Every lookup is an HTTP call to the Tools API, which runs as a separate process with its own lifecycle.
 
+
 ---
+## Roadmap
+
+Not to much is planned to be added feature wise. I plan on looking into organization and simplicity to use the bot in servers. My main focus is the logic flow of the *Answer Machine* mode (might be renames tbh).
+
+If you want to see anything added to the bot: **features**, **logic flows**, **compatibility**, **etc**. You can join the Discord [Sable](https://discord.gg/HEA7Z2eQwd). Check under the **Projects post** section for the *pinned* post.  
 
 ## License
 
